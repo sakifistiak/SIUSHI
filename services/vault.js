@@ -5,6 +5,10 @@ const DB_PATH = path.join(__dirname, '..', 'data', 'vault.json');
 const VAULT_DIR = path.join(__dirname, '..', 'vault_files');
 
 function initDB() {
+    const dir = path.dirname(DB_PATH);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
     if (!fs.existsSync(DB_PATH)) {
         fs.writeFileSync(DB_PATH, JSON.stringify({ files: [] }, null, 2));
     }

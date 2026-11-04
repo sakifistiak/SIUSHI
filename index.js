@@ -25,6 +25,11 @@ if (!TELEGRAM_TOKEN) {
 const http = require('http');
 const PORT = process.env.PORT || 3000;
 
+// Ensure local directories exist
+['./data', './vault_files'].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
+
 // Lightweight HTTP server for Render/Cloud health checks
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
