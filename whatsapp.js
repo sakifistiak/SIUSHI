@@ -1,16 +1,52 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const QRCode = require('qrcode');
-const qrcodeTerminal = require('qrcode-terminal');
 const path = require('path');
 const fs = require('fs');
 
 let waSocket = null;
+let currentPairingCode = null;
+let isConnected = false;
+let lastPairingError = null;
+
+async function requestNewPairingCode(botNumber, onPairingCode) {
+    if (!waSocket) {
+        lastPairingError = 'Socket not ready yet';
+        return null;
+    }
+    if (isConnected) {
+        lastPairingError = 'Already connected';
+        return null;
+    }
+    const cleanNumber = (botNumber || process.env.BOT_PHONE_NUMBER || '').replace(/[^0-9]/g, '');
+    if (!cleanNumber) {
+        lastPairingError = 'No phone number provided';
+        return null;
+    }
+
+    try {
+        console.log(`\n⏳ Requesting fresh Pairing Code for: ${cleanNumber}...`);
+        const code = await waSocket.requestPairingCode(cleanNumber);
+        currentPairingCode = code;
+        lastPairingError = null;
+        console.log(`\n🔑 FRESH PAIRING CODE: 👉  ${code}  👈\n`);
+        if (onPairingCode) {
+            onPairingCode(code);
+        }
+        return code;
+    } catch (err) {
+        console.error('❌ Error requesting pairing code:', err.message);
+        lastPairingError = err.message;
+        return null;
+    }
+}
 
 async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived, onPairingCode) {
     const authDir = path.join(__dirname, 'baileys_auth_info');
-    const { state, saveCreds } = await useMultiFileAuthState(authDir);
+    if (!fs.existsSync(authDir)) {
+        fs.mkdirSync(authDir, { recursive: true });
+    }
 
+    const { state, saveCreds } = await useMultiFileAuthState(authDir);
     const botNumber = process.env.BOT_PHONE_NUMBER ? process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '') : null;
 
     waSocket = makeWASocket({
@@ -28,55 +64,25 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
 
     // If pairing code mode is requested and not registered yet
     if (botNumber && !waSocket.authState.creds.registered) {
-        console.log(`\n⏳ Requesting Pairing Code for WhatsApp number: ${botNumber}...`);
-        setTimeout(async () => {
-            try {
-                const code = await waSocket.requestPairingCode(botNumber);
-                console.log('\n======================================================');
-                console.log(`🔑 YOUR WHATSAPP PAIRING CODE IS:  👉  ${code}  👈`);
-                console.log('======================================================');
-                console.log('📱 On your phone:');
-                console.log('1. Open WhatsApp > Linked Devices > Link a Device');
-                console.log('2. Tap "Link with phone number instead" at the bottom');
-                console.log(`3. Enter the 8-digit code: ${code}\n`);
-
-                if (onPairingCode) {
-                    onPairingCode(code);
-                }
-            } catch (err) {
-                console.error('❌ Error requesting pairing code:', err.message);
-            }
-        }, 3000);
+        setTimeout(() => {
+            requestNewPairingCode(botNumber, onPairingCode);
+        }, 5000);
     }
 
     waSocket.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        if (qr && !botNumber) {
-            console.log('\n======================================================');
-            console.log('📲 Scan this QR Code with WhatsApp (Linked Devices):');
-            console.log('======================================================\n');
-            qrcodeTerminal.generate(qr, { small: true });
-
-            try {
-                await QRCode.toFile('./whatsapp-qr.png', qr);
-                console.log('🖼️ Also saved QR code image to: whatsapp-qr.png\n');
-            } catch (e) {
-                // ignore
-            }
-        }
+        const { connection, lastDisconnect } = update;
 
         if (connection === 'close') {
+            isConnected = false;
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             console.log('⚠️ WhatsApp connection closed. Reconnecting:', shouldReconnect);
             if (shouldReconnect) {
-                startWhatsApp(onMessageReceived, onMediaReceived);
+                startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived, onPairingCode);
             }
         } else if (connection === 'open') {
+            isConnected = true;
+            currentPairingCode = null;
             console.log('\n✅ WhatsApp is successfully connected and online!\n');
-            if (fs.existsSync('./whatsapp-qr.png')) {
-                fs.unlinkSync('./whatsapp-qr.png');
-            }
         }
     });
 
@@ -89,7 +95,7 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
 
             const from = msg.key.remoteJid;
 
-            // Check if audio / voice message
+            // Audio message
             const isAudio = Boolean(msg.message?.audioMessage);
             if (isAudio && onAudioReceived) {
                 try {
@@ -103,7 +109,7 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
                 }
             }
 
-            // Check if media message (image, document, pdf)
+            // Image or Document
             const isMedia = Boolean(msg.message?.imageMessage || msg.message?.documentMessage);
             if (isMedia && onMediaReceived) {
                 try {
@@ -170,8 +176,18 @@ async function sendWhatsAppFile(jid, filePath, caption, mimeType) {
     }
 }
 
+function getWhatsAppStatus() {
+    return {
+        isConnected,
+        currentPairingCode,
+        lastPairingError
+    };
+}
+
 module.exports = {
     startWhatsApp,
     sendWhatsAppMessage,
-    sendWhatsAppFile
+    sendWhatsAppFile,
+    requestNewPairingCode,
+    getWhatsAppStatus
 };

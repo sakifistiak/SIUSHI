@@ -13,7 +13,7 @@ const urgent = require('./services/urgent');
 const vault = require('./services/vault');
 const dues = require('./services/dues');
 const voice = require('./services/voice');
-const { startWhatsApp, sendWhatsAppMessage, sendWhatsAppFile } = require('./whatsapp');
+const { startWhatsApp, sendWhatsAppMessage, sendWhatsAppFile, requestNewPairingCode, getWhatsAppStatus } = require('./whatsapp');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 
@@ -30,12 +30,97 @@ const PORT = process.env.PORT || 3000;
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Lightweight HTTP server for Render/Cloud health checks
-http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('SIUSHO AI Assistant is Running 24/7!\n');
+// Dashboard and Health check server
+http.createServer(async (req, res) => {
+    const url = req.url || '/';
+
+    if (url === '/request-code') {
+        const botNumber = process.env.BOT_PHONE_NUMBER;
+        await requestNewPairingCode(botNumber, handlePairingCode);
+        res.writeHead(302, { Location: '/' });
+        return res.end();
+    }
+
+    if (url === '/json') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(getWhatsAppStatus()));
+    }
+
+    const { isConnected, currentPairingCode, lastPairingError } = getWhatsAppStatus();
+
+    const html = `<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <title>SIUSHO AI Assistant Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; text-align: center; margin: 0; }
+        .card { background: #1e293b; max-width: 480px; margin: 40px auto; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #334155; }
+        h1 { margin-top: 0; font-size: 26px; color: #38bdf8; }
+        .status-row { display: flex; justify-content: space-between; align-items: center; margin: 15px 0; padding: 12px 18px; background: #0f172a; border-radius: 12px; font-weight: 500; }
+        .badge { padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
+        .badge-green { background: #065f46; color: #34d399; }
+        .badge-yellow { background: #78350f; color: #fbbf24; }
+        .code-box { background: #0284c7; color: #fff; font-size: 32px; font-weight: 800; letter-spacing: 5px; padding: 18px; border-radius: 14px; margin: 25px 0 15px 0; user-select: all; box-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
+        .instruction { font-size: 14px; color: #94a3b8; line-height: 1.6; text-align: left; background: #0f172a; padding: 15px; border-radius: 12px; margin-top: 20px; }
+        .btn { display: inline-block; background: #38bdf8; color: #0f172a; font-weight: 700; text-decoration: none; padding: 12px 24px; border-radius: 10px; margin-top: 15px; transition: 0.2s; }
+        .btn:hover { background: #7dd3fc; }
+        .error { color: #f87171; font-size: 13px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🤖 SIUSHO Assistant</h1>
+        <p style="color: #94a3b8;">Cloud Status & WhatsApp Pairing Dashboard</p>
+
+        <div class="status-row">
+            <span>Telegram Bot</span>
+            <span class="badge badge-green">Connected ✅</span>
+        </div>
+
+        <div class="status-row">
+            <span>WhatsApp Bot</span>
+            <span class="badge ${isConnected ? 'badge-green' : 'badge-yellow'}">
+                ${isConnected ? 'Online & Linked ✅' : 'Waiting for Pairing ⏳'}
+            </span>
+        </div>
+
+        ${!isConnected ? `
+            ${currentPairingCode ? `
+                <p style="margin-top: 25px; font-size: 15px;">আপনার মোবাইলে দেওয়ার জন্য ৮-ডিজিটের কোড:</p>
+                <div class="code-box">${currentPairingCode}</div>
+                <a href="/request-code" class="btn">🔄 নতুন কোড জেনারেট করুন</a>
+            ` : `
+                <div style="margin: 25px 0;">
+                    <p style="color: #fbbf24;">কোড তৈরি হচ্ছে...</p>
+                    <a href="/request-code" class="btn">🔑 কোড পেতে ক্লিক করুন</a>
+                </div>
+            `}
+
+            ${lastPairingError ? `<div class="error">⚠️ ${lastPairingError}</div>` : ''}
+
+            <div class="instruction">
+                📱 <b>কীভাবে লিঙ্ক করবেন:</b><br>
+                1. আপনার মোবাইলের <b>WhatsApp</b> খুলুন।<br>
+                2. <b>Linked Devices &gt; Link a Device</b>-এ যান।<br>
+                3. নিচে <b>"Link with phone number instead"</b> চাপুন।<br>
+                4. উপরের স্ক্রিনের ৮ ডিজিটের কোডটি বসিয়ে দিন!
+            </div>
+        ` : `
+            <div style="margin-top: 30px; padding: 20px; background: #064e3b; border-radius: 14px; color: #6ee7b7;">
+                <h3>🎉 WhatsApp সফলভাবে কানেক্টেড!</h3>
+                <p style="font-size: 14px; color: #a7f3d0;">আপনার সহকারী এখন ২৪/৭ ক্লাউডে সচল আছে।</p>
+            </div>
+        `}
+    </div>
+</body>
+</html>`;
+
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(html);
 }).listen(PORT, () => {
-    console.log(`🌐 Web health server listening on port ${PORT}`);
+    console.log(`🌐 Dashboard web server listening on port ${PORT}`);
 });
 
 // Auto Self-Ping to prevent Render free instance from sleeping
