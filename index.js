@@ -22,6 +22,17 @@ if (!TELEGRAM_TOKEN) {
     process.exit(1);
 }
 
+const http = require('http');
+const PORT = process.env.PORT || 3000;
+
+// Lightweight HTTP server for Render/Cloud health checks
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('SIUSHO AI Assistant is Running 24/7!\n');
+}).listen(PORT, () => {
+    console.log(`🌐 Web health server listening on port ${PORT}`);
+});
+
 // 1. Initialize Telegram Bot
 const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 console.log('🤖 Telegram Bot (SIUSHO) is initialized and listening!');
