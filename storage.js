@@ -38,6 +38,10 @@ function loadData() {
 
 function saveData(data) {
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    try {
+        const db = require('./services/db');
+        db.saveCollection('reminders', data.reminders || []).catch(e => {});
+    } catch(e) {}
 }
 
 function setTelegramUser(chatId) {

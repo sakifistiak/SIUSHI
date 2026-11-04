@@ -55,6 +55,10 @@ function updateSettings(updates) {
         updated.adminPasswordHash = hashPassword(updates.adminPassword);
     }
     fs.writeFileSync(SETTINGS_PATH, JSON.stringify(updated, null, 2));
+    try {
+        const db = require('./db');
+        db.saveCollection('settings', updated).catch(e => {});
+    } catch(e) {}
     return updated;
 }
 
@@ -85,6 +89,10 @@ function loadUsersData() {
 
 function saveUsersData(data) {
     fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
+    try {
+        const db = require('./db');
+        db.saveCollection('users', data.users).catch(e => {});
+    } catch(e) {}
 }
 
 function normalizePhone(input) {

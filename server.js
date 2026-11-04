@@ -7,6 +7,7 @@ const dues = require('./services/dues');
 const clients = require('./services/clients');
 const storage = require('./storage');
 const sheetsService = require('./services/sheets');
+const db = require('./services/db');
 const { getWhatsAppStatus, requestNewPairingCode, getSessionBase64, restoreSessionFromBase64 } = require('./whatsapp');
 
 const app = express();
@@ -1061,6 +1062,41 @@ app.post('/admin/settings-update', requireAdmin, (req, res) => {
     res.redirect('/admin?saved=1');
 });
 
+// Update MongoDB Database Settings
+app.post('/admin/database-settings', requireAdmin, async (req, res) => {
+    const { mongoUri } = req.body;
+    const settings = usersService.getSettings();
+    settings.mongoUri = (mongoUri || '').trim();
+    usersService.updateSettings(settings);
+    process.env.MONGODB_URI = settings.mongoUri;
+    await db.initDatabase();
+    res.redirect('/admin?saved=1');
+});
+
+// Full Database Snapshot Download (JSON)
+app.get('/api/backup/download', requireAdmin, async (req, res) => {
+    const snapshot = await db.exportFullSnapshot();
+    const dateStr = db.getDhakaDateString();
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="siusho_full_backup_${dateStr}.json"`);
+    res.send(JSON.stringify(snapshot, null, 2));
+});
+
+// Full Database Snapshot Restore
+app.post('/admin/restore-snapshot', requireAdmin, async (req, res) => {
+    const { snapshotJson } = req.body;
+    try {
+        const parsed = JSON.parse(snapshotJson);
+        const result = await db.restoreFullSnapshot(parsed);
+        if (result.success) {
+            return res.redirect('/admin?saved=1');
+        }
+        return res.redirect('/admin?error=' + encodeURIComponent(result.error || 'Restore failed.'));
+    } catch (e) {
+        return res.redirect('/admin?error=' + encodeURIComponent('Invalid JSON format for snapshot.'));
+    }
+});
+
 // Return live WhatsApp status as JSON for Admin auto-poll
 app.get('/admin/status-json', requireAdmin, (req, res) => {
     res.json(getWhatsAppStatus());
@@ -1297,6 +1333,46 @@ app.get('/admin', requireAdmin, (req, res) => {
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+
+        <!-- Database & Cloud Persistence -->
+        <div class="panel-card" style="margin-bottom: 28px;">
+            <div class="panel-header">
+                <span class="panel-title">Cloud Database & Storage Persistence</span>
+                <span class="badge ${db.isMongoConnected() ? 'badge-green' : 'badge-amber'}">
+                    <span class="status-dot ${db.isMongoConnected() ? 'status-dot-green' : 'status-dot-amber'}"></span>
+                    ${db.isMongoConnected() ? 'MongoDB Atlas Active (Permanent Storage)' : 'Ephemeral Local Files (Render Reset on Deploy)'}
+                </span>
+            </div>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5;">
+                Render cloud instances use ephemeral containers that wipe local JSON files on every new code deploy. To ensure your users, accounts, transactions, and reminders are stored <b>permanently and never lost</b>, connect a free MongoDB Atlas cluster.
+            </p>
+
+            <form action="/admin/database-settings" method="POST" style="margin-bottom: 20px;">
+                <div style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 320px;">
+                        <label class="form-label">MongoDB Atlas Connection URI</label>
+                        <input type="text" name="mongoUri" class="form-input" value="${settings.mongoUri || ''}" placeholder="mongodb+srv://username:password@cluster.mongodb.net/siusho?retryWrites=true&w=majority">
+                        <span style="font-size: 11px; color: var(--text-subtle);">You can also set MONGODB_URI in Render Environment Variables.</span>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="padding: 10px 18px;">
+                        Connect & Migrate Data
+                    </button>
+                </div>
+            </form>
+
+            <div style="border-top: 1px solid var(--border-subtle); padding-top: 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+                <div>
+                    <div style="font-size: 13px; font-weight: 600;">Manual Full Snapshot Backup</div>
+                    <div style="font-size: 12px; color: var(--text-subtle);">Download a complete JSON export of all users, finances, dues, and reminders.</div>
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <a href="/api/backup/download" class="btn btn-secondary" style="font-size: 12px;">
+                        ${ICONS.download}
+                        Download Full Snapshot (.json)
+                    </a>
+                </div>
             </div>
         </div>
 

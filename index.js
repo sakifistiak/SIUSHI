@@ -312,6 +312,16 @@ async function processUserCommand(text, platform, userChatId, userId) {
         }
     }
 
+    // High-Speed Local Finance Detection (0ms latency, zero calculation errors)
+    const quickFin = finance.parseQuickFinance(cleanText);
+    if (quickFin) {
+        const item = finance.addTransaction(userId, quickFin);
+        const icon = item.type === 'income' ? '🟢 আয়' : '🔴 ব্যয়';
+        const reply = `✅ *${icon} সফলভাবে যোগ হয়েছে!*\n\n💵 *পরিমাণ:* ${item.amount.toLocaleString('en-US')} ৳\n📁 *খাত:* ${item.category}\n📝 *নোট:* ${item.note || 'কোনো নোট নেই'}\n📅 *তারিখ:* ${item.date}`;
+        recordHistory(userId, 'bot', reply);
+        return reply;
+    }
+
     // AI Intent Classification with User-Specific Context
     const history = getUserHistory(userId);
     const classified = await classifyIntent(cleanText, history);
