@@ -1,10 +1,12 @@
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, downloadMediaMessage } = require('@whiskeysockets/baileys');
 const pino = require('pino');
+const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
 
 let waSocket = null;
 let currentPairingCode = null;
+let currentQRCodeDataUrl = null;
 let isConnected = false;
 let lastPairingError = null;
 
@@ -66,11 +68,20 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
     if (botNumber && !waSocket.authState.creds.registered) {
         setTimeout(() => {
             requestNewPairingCode(botNumber, onPairingCode);
-        }, 5000);
+        }, 4000);
     }
 
     waSocket.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            try {
+                currentQRCodeDataUrl = await QRCode.toDataURL(qr, { scale: 8, margin: 2 });
+                console.log('📲 Live QR Code updated for Web Dashboard');
+            } catch (e) {
+                // ignore
+            }
+        }
 
         if (connection === 'close') {
             isConnected = false;
@@ -82,6 +93,7 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
         } else if (connection === 'open') {
             isConnected = true;
             currentPairingCode = null;
+            currentQRCodeDataUrl = null;
             console.log('\n✅ WhatsApp is successfully connected and online!\n');
         }
     });
@@ -180,6 +192,7 @@ function getWhatsAppStatus() {
     return {
         isConnected,
         currentPairingCode,
+        currentQRCodeDataUrl,
         lastPairingError
     };
 }

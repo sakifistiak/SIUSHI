@@ -46,7 +46,7 @@ http.createServer(async (req, res) => {
         return res.end(JSON.stringify(getWhatsAppStatus()));
     }
 
-    const { isConnected, currentPairingCode, lastPairingError } = getWhatsAppStatus();
+    const { isConnected, currentPairingCode, currentQRCodeDataUrl, lastPairingError } = getWhatsAppStatus();
 
     const html = `<!DOCTYPE html>
 <html lang="bn">
@@ -87,16 +87,18 @@ http.createServer(async (req, res) => {
         </div>
 
         ${!isConnected ? `
-            ${currentPairingCode ? `
-                <p style="margin-top: 25px; font-size: 15px;">আপনার মোবাইলে দেওয়ার জন্য ৮-ডিজিটের কোড:</p>
-                <div class="code-box">${currentPairingCode}</div>
-                <a href="/request-code" class="btn">🔄 নতুন কোড জেনারেট করুন</a>
-            ` : `
-                <div style="margin: 25px 0;">
-                    <p style="color: #fbbf24;">কোড তৈরি হচ্ছে...</p>
-                    <a href="/request-code" class="btn">🔑 কোড পেতে ক্লিক করুন</a>
+            ${currentQRCodeDataUrl ? `
+                <div style="margin: 20px 0;">
+                    <p style="font-weight: 600; font-size: 16px; color: #38bdf8;">📲 ক্যামেরা দিয়ে নিচের QR কোডটি স্ক্যান করুন:</p>
+                    <img src="${currentQRCodeDataUrl}" style="width: 250px; height: 250px; border-radius: 14px; background: #fff; padding: 10px; box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);" />
                 </div>
-            `}
+            ` : ''}
+
+            <div style="margin: 20px 0; border-top: 1px solid #334155; padding-top: 15px;">
+                <p style="font-size: 14px; color: #94a3b8;">অথবা ৮-সংখ্যার কোড দিয়ে লিংক করতে চাইলে:</p>
+                <div class="code-box">${currentPairingCode || 'Generating...'}</div>
+                <a href="/request-code" class="btn">🔄 নতুন কোড / QR রিফ্রেশ</a>
+            </div>
 
             ${lastPairingError ? `<div class="error">⚠️ ${lastPairingError}</div>` : ''}
 
@@ -104,8 +106,7 @@ http.createServer(async (req, res) => {
                 📱 <b>কীভাবে লিঙ্ক করবেন:</b><br>
                 1. আপনার মোবাইলের <b>WhatsApp</b> খুলুন।<br>
                 2. <b>Linked Devices &gt; Link a Device</b>-এ যান।<br>
-                3. নিচে <b>"Link with phone number instead"</b> চাপুন।<br>
-                4. উপরের স্ক্রিনের ৮ ডিজিটের কোডটি বসিয়ে দিন!
+                3. ক্যামেরা দিয়ে উপরের <b>QR কোডটি স্ক্যান করুন</b> (অথবা নিচে "Link with phone number instead"-এ কোডটি দিন)!
             </div>
         ` : `
             <div style="margin-top: 30px; padding: 20px; background: #064e3b; border-radius: 14px; color: #6ee7b7;">
