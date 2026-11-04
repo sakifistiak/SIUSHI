@@ -38,6 +38,20 @@ http.createServer((req, res) => {
     console.log(`🌐 Web health server listening on port ${PORT}`);
 });
 
+// Auto Self-Ping to prevent Render free instance from sleeping
+const pingTarget = process.env.RENDER_EXTERNAL_URL;
+if (pingTarget) {
+    console.log(`📡 Auto-ping configured for: ${pingTarget}`);
+    setInterval(async () => {
+        try {
+            await fetch(pingTarget);
+            console.log('💓 Self-ping sent to keep Render alive 24/7');
+        } catch (e) {
+            // ignore
+        }
+    }, 10 * 60 * 1000);
+}
+
 // 1. Initialize Telegram Bot
 const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 console.log('🤖 Telegram Bot (SIUSHO) is initialized and listening!');
