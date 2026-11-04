@@ -79,7 +79,16 @@ Analyze the user's input with conversation history and classify into EXACTLY ONE
 15. REMINDER: Regular or multi-shot timer/reminder (e.g. "১০ মিনিট পর চা খাবো", "5 min pore 3 bar reminder diba").
     data: { "raw": string }
 
-16. GREETING: Casual greeting or checking if bot is online (e.g. "acho?", "কেমন আছো", "hello").
+16. AUTH_NUMBER_ADD: Adding or authorizing a secondary phone number (e.g. "আমার এই নাম্বার অ্যাড করে দাও 017xxxxxxxx", "নম্বর যোগ করো 018xxxxxxxx", "add number 015xxxxxx", "second number 019...").
+    data: { "phone": string }
+
+17. AUTH_NUMBER_LIST: Viewing authorized phone numbers (e.g. "অনুমোদিত নম্বরগুলো দেখাও", "কোন কোন নাম্বার এড আছে", "number list", "authorized numbers").
+    data: {}
+
+18. AUTH_NUMBER_REMOVE: Removing an authorized phone number (e.g. "017xxxx নম্বর মুছে দাও", "remove number 018xxxx").
+    data: { "phone": string }
+
+19. GREETING: Casual greeting or checking if bot is online (e.g. "acho?", "কেমন আছো", "hello").
     data: {}
 ${historyText}
 Current User input: "${input}"

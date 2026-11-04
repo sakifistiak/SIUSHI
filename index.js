@@ -32,21 +32,48 @@ const PORT = process.env.PORT || 3000;
 
 // Dashboard and Health check server
 http.createServer(async (req, res) => {
-    const url = req.url || '/';
+    const host = req.headers.host || 'localhost';
+    const parsedUrl = new URL(req.url, `http://${host}`);
+    const pathname = parsedUrl.pathname;
 
-    if (url === '/request-code') {
+    if (pathname === '/request-code') {
         const botNumber = process.env.BOT_PHONE_NUMBER;
         await requestNewPairingCode(botNumber, handlePairingCode);
         res.writeHead(302, { Location: '/' });
         return res.end();
     }
 
-    if (url === '/json') {
+    if (pathname === '/add-number') {
+        const phone = parsedUrl.searchParams.get('phone');
+        if (phone) {
+            storage.addAuthorizedNumber(phone);
+        }
+        res.writeHead(302, { Location: '/' });
+        return res.end();
+    }
+
+    if (pathname === '/remove-number') {
+        const phone = parsedUrl.searchParams.get('phone');
+        if (phone) {
+            storage.removeAuthorizedNumber(phone);
+        }
+        res.writeHead(302, { Location: '/' });
+        return res.end();
+    }
+
+    if (pathname === '/json') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify(getWhatsAppStatus()));
+        return res.end(JSON.stringify({
+            ...getWhatsAppStatus(),
+            authorizedNumbers: storage.getAuthorizedNumbers()
+        }));
     }
 
     const { isConnected, currentPairingCode, currentQRCodeDataUrl, lastPairingError } = getWhatsAppStatus();
+    const users = storage.getUsers();
+    const primaryDisplay = users.whatsappChatId ? users.whatsappChatId.split('@')[0] : (process.env.BOT_PHONE_NUMBER || '01576932471');
+    const allAuth = storage.getAuthorizedNumbers();
+    const secondaryNumbers = allAuth.filter(n => n !== primaryDisplay && n !== storage.normalizePhoneNumber(primaryDisplay));
 
     const html = `<!DOCTYPE html>
 <html lang="bn">
@@ -56,23 +83,31 @@ http.createServer(async (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; text-align: center; margin: 0; }
-        .card { background: #1e293b; max-width: 480px; margin: 40px auto; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #334155; }
+        .card { background: #1e293b; max-width: 500px; margin: 30px auto; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #334155; }
         h1 { margin-top: 0; font-size: 26px; color: #38bdf8; }
-        .status-row { display: flex; justify-content: space-between; align-items: center; margin: 15px 0; padding: 12px 18px; background: #0f172a; border-radius: 12px; font-weight: 500; }
+        .status-row { display: flex; justify-content: space-between; align-items: center; margin: 12px 0; padding: 12px 18px; background: #0f172a; border-radius: 12px; font-weight: 500; font-size: 14px; }
         .badge { padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
         .badge-green { background: #065f46; color: #34d399; }
         .badge-yellow { background: #78350f; color: #fbbf24; }
         .code-box { background: #0284c7; color: #fff; font-size: 32px; font-weight: 800; letter-spacing: 5px; padding: 18px; border-radius: 14px; margin: 25px 0 15px 0; user-select: all; box-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
-        .instruction { font-size: 14px; color: #94a3b8; line-height: 1.6; text-align: left; background: #0f172a; padding: 15px; border-radius: 12px; margin-top: 20px; }
+        .instruction { font-size: 13px; color: #94a3b8; line-height: 1.6; text-align: left; background: #0f172a; padding: 15px; border-radius: 12px; margin-top: 20px; }
         .btn { display: inline-block; background: #38bdf8; color: #0f172a; font-weight: 700; text-decoration: none; padding: 12px 24px; border-radius: 10px; margin-top: 15px; transition: 0.2s; }
         .btn:hover { background: #7dd3fc; }
         .error { color: #f87171; font-size: 13px; margin-top: 10px; }
+        .numbers-box { margin-top: 25px; text-align: left; background: #0f172a; padding: 20px; border-radius: 14px; border: 1px solid #334155; }
+        .number-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #1e293b; font-size: 14px; }
+        .del-btn { color: #f87171; text-decoration: none; font-size: 12px; font-weight: 600; padding: 3px 8px; background: rgba(239, 68, 68, 0.15); border-radius: 6px; }
+        .del-btn:hover { background: rgba(239, 68, 68, 0.3); }
+        .add-form { display: flex; gap: 8px; margin-top: 15px; }
+        .input-phone { flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #f8fafc; font-size: 14px; outline: none; }
+        .input-phone:focus { border-color: #38bdf8; }
+        .submit-btn { background: #38bdf8; color: #0f172a; border: none; border-radius: 8px; padding: 10px 16px; font-weight: 700; cursor: pointer; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="card">
         <h1>🤖 SIUSHO Assistant</h1>
-        <p style="color: #94a3b8;">Cloud Status & WhatsApp Pairing Dashboard</p>
+        <p style="color: #94a3b8; font-size: 14px; margin-bottom: 25px;">Personal AI Executive Dashboard & Access Control</p>
 
         <div class="status-row">
             <span>Telegram Bot</span>
@@ -109,11 +144,37 @@ http.createServer(async (req, res) => {
                 3. ক্যামেরা দিয়ে উপরের <b>QR কোডটি স্ক্যান করুন</b> (অথবা নিচে "Link with phone number instead"-এ কোডটি দিন)!
             </div>
         ` : `
-            <div style="margin-top: 30px; padding: 20px; background: #064e3b; border-radius: 14px; color: #6ee7b7;">
-                <h3>🎉 WhatsApp সফলভাবে কানেক্টেড!</h3>
-                <p style="font-size: 14px; color: #a7f3d0;">আপনার সহকারী এখন ২৪/৭ ক্লাউডে সচল আছে।</p>
+            <div style="margin-top: 20px; padding: 16px; background: #064e3b; border-radius: 14px; color: #6ee7b7; font-size: 14px;">
+                🎉 <b>WhatsApp সফলভাবে কানেক্টেড!</b> আপনার সহকারী এখন লাইভ রয়েছে।
             </div>
         `}
+
+        <!-- Dynamic Secondary Numbers Control Section -->
+        <div class="numbers-box">
+            <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #38bdf8; display: flex; justify-content: space-between; align-items: center;">
+                <span>📱 অনুমোদিত নম্বরসমূহ (Access Control)</span>
+            </h3>
+            <p style="font-size: 12px; color: #94a3b8; margin: 0 0 14px 0;">যেসব নম্বর যোগ করবেন তারা সবাই WhatsApp-এ বটের সকল সুযোগ-সুবিধা ও স্বয়ংক্রিয় অ্যালার্ট পাবে।</p>
+
+            <div class="number-item" style="color: #cbd5e1;">
+                <span>👑 <b>মূল অ্যাকাউন্ট:</b> <code>${primaryDisplay}</code></span>
+                <span style="font-size: 11px; color: #34d399; font-weight: bold;">PRIMARY</span>
+            </div>
+
+            ${secondaryNumbers.map(n => `
+                <div class="number-item">
+                    <span>👤 <code>${n}</code></span>
+                    <a href="/remove-number?phone=${n}" onclick="return confirm('মুছে ফেলতে চান?');" class="del-btn">মুছুন 🗑️</a>
+                </div>
+            `).join('')}
+
+            ${secondaryNumbers.length === 0 ? '<p style="color: #64748b; font-size: 13px; margin: 12px 0 6px 0;">কোনো সেকেন্ডারি নম্বর যোগ করা নেই। নিচে নম্বর দিন:</p>' : ''}
+
+            <form action="/add-number" method="GET" class="add-form">
+                <input type="text" name="phone" placeholder="যেমন: 017xxxxxxxx" class="input-phone" required>
+                <button type="submit" class="submit-btn">+ যোগ করুন</button>
+            </form>
+        </div>
     </div>
 </body>
 </html>`;
@@ -160,6 +221,9 @@ const MAIN_MENU_KEYBOARD = {
             ],
             [
                 { text: '📂 ভল্টের ফাইলসমূহ', callback_data: 'btn_vault' },
+                { text: '📱 অনুমোদিত নম্বর', callback_data: 'btn_auth_numbers' }
+            ],
+            [
                 { text: '🗑️ শেষ খরচ মুছো', callback_data: 'btn_fin_delete' }
             ]
         ]
@@ -170,7 +234,7 @@ const MAIN_MENU_KEYBOARD = {
 async function sendDualNotification(messageText, options = {}) {
     const users = storage.getUsers();
     let sentTelegram = false;
-    let sentWhatsApp = false;
+    let sentWhatsApp = 0;
 
     if (users.telegramChatId) {
         try {
@@ -181,17 +245,27 @@ async function sendDualNotification(messageText, options = {}) {
         }
     }
 
-    const waTarget = users.whatsappChatId || (process.env.BOT_PHONE_NUMBER ? `${process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '')}@s.whatsapp.net` : null);
+    const primaryWa = users.whatsappChatId || (process.env.BOT_PHONE_NUMBER ? `${process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '')}@s.whatsapp.net` : null);
 
-    if (waTarget) {
+    const targetSet = new Set();
+    if (primaryWa) targetSet.add(primaryWa);
+
+    // Broadcast to all authorized numbers (primary + secondary)
+    const authorizedList = storage.getAuthorizedNumbers();
+    for (const num of authorizedList) {
+        targetSet.add(`${num}@s.whatsapp.net`);
+    }
+
+    for (const target of targetSet) {
         try {
-            sentWhatsApp = await sendWhatsAppMessage(waTarget, messageText);
+            const ok = await sendWhatsAppMessage(target, messageText);
+            if (ok) sentWhatsApp++;
         } catch (err) {
-            console.error('Failed to send WhatsApp notification:', err.message);
+            console.error(`Failed to send WhatsApp notification to ${target}:`, err.message);
         }
     }
 
-    console.log(`[Notification Triggered] Telegram: ${sentTelegram}, WhatsApp: ${sentWhatsApp}`);
+    console.log(`[Notification Triggered] Telegram: ${sentTelegram}, WhatsApp recipients: ${sentWhatsApp}`);
 }
 
 async function sendDualFile(filePath, caption, mimeType) {
@@ -209,13 +283,20 @@ async function sendDualFile(filePath, caption, mimeType) {
         }
     }
 
-    const waTarget = users.whatsappChatId || (process.env.BOT_PHONE_NUMBER ? `${process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '')}@s.whatsapp.net` : null);
+    const primaryWa = users.whatsappChatId || (process.env.BOT_PHONE_NUMBER ? `${process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '')}@s.whatsapp.net` : null);
+    const targetSet = new Set();
+    if (primaryWa) targetSet.add(primaryWa);
 
-    if (waTarget) {
+    const authorizedList = storage.getAuthorizedNumbers();
+    for (const num of authorizedList) {
+        targetSet.add(`${num}@s.whatsapp.net`);
+    }
+
+    for (const target of targetSet) {
         try {
-            await sendWhatsAppFile(waTarget, filePath, caption, mimeType);
+            await sendWhatsAppFile(target, filePath, caption, mimeType);
         } catch (err) {
-            console.error('Failed to send WhatsApp file:', err.message);
+            console.error(`Failed to send WhatsApp file to ${target}:`, err.message);
         }
     }
 }
@@ -275,7 +356,38 @@ async function processUserCommand(text, platform, userChatId) {
             await telegramBot.sendMessage(userChatId, reply, MAIN_MENU_KEYBOARD);
             return null;
         }
-        return reply + "\n\n• 💸 খরচের হিসাব\n• 📊 দৈনিক রিপোর্ট ('আজকের হিসাব')\n• 🤝 দেনা-পাওনা খাতা\n• 👤 ক্লায়েন্ট ডেডলাইন\n• 🚨 পরীক্ষা/ভাইভা নাছোড়বান্দা অ্যালার্ম\n• 🎙️ ভয়েস মেসেজ দিয়েও কথা বলতে পারেন!";
+        return reply + "\n\n• 💸 খরচের হিসাব\n• 📊 দৈনিক রিপোর্ট ('আজকের হিসাব')\n• 🤝 দেনা-পাওনা খাতা\n• 👤 ক্লায়েন্ট ডেডলাইন\n• 🚨 পরীক্ষা/ভাইভা নাছোড়বান্দা অ্যালার্ম\n• 📱 অনুমোদিত নম্বরসমূহ ('নম্বর লিস্ট')\n• 🎙️ ভয়েস মেসেজ দিয়েও কথা বলতে পারেন!";
+    }
+
+    // Direct command for authorized numbers
+    if (cleanText.startsWith('/addnumber') || cleanText.startsWith('/add_number') || cleanText.match(/^(?:নম্বর|নাম্বার)\s+(?:যোগ|এড|অ্যাড)\s+ক?রো?\s+([0-9+]+)/i)) {
+        const match = cleanText.match(/([0-9+]{8,15})/);
+        if (match) {
+            const added = storage.addAuthorizedNumber(match[1]);
+            const reply = added 
+                ? `✅ *নতুন নম্বর অনুমোদিত হয়েছে!*\n\n📱 নম্বর: \`${added}\`\nএখন থেকে এই নম্বর থেকেও WhatsApp-এ বটের সকল সুবিধা ব্যবহার করা যাবে এবং অ্যালার্ট পাওয়া যাবে। 👍`
+                : `❌ নম্বর ফরম্যাট সঠিক নয়। সঠিক মোবাইল নম্বর দিন (যেমন: 017xxxxxxxx)।`;
+            recordHistory('bot', reply);
+            return reply;
+        }
+    }
+
+    if (cleanText.startsWith('/removenumber') || cleanText.startsWith('/remove_number') || cleanText.match(/^(?:নম্বর|নাম্বার)\s+(?:মুছে|বাদ|ডিলিট)\s+(?:দাও|ফেলো|করো)\s+([0-9+]+)/i)) {
+        const match = cleanText.match(/([0-9+]{8,15})/);
+        if (match) {
+            const removed = storage.removeAuthorizedNumber(match[1]);
+            const reply = removed
+                ? `🗑️ *নম্বরটি সফলভাবে মুছে ফেলা হয়েছে!* (${match[1]})`
+                : `❓ নম্বরটি অনুমোদিত লিস্টে পাওয়া যায়নি।`;
+            recordHistory('bot', reply);
+            return reply;
+        }
+    }
+
+    if (cleanText === '/numbers' || cleanText === '/auth_numbers' || cleanText === 'নম্বর লিস্ট' || cleanText === 'অনুমোদিত নম্বর') {
+        const reply = storage.formatAuthorizedNumbersList();
+        recordHistory('bot', reply);
+        return reply;
     }
 
     // AI Intent Classification with Conversation Context
@@ -437,6 +549,43 @@ async function processUserCommand(text, platform, userChatId) {
         return reply;
     }
 
+    // Handle AUTH_NUMBER_ADD
+    if (intent === 'AUTH_NUMBER_ADD') {
+        const phone = data.phone || cleanText;
+        const added = storage.addAuthorizedNumber(phone);
+        if (added) {
+            const reply = `✅ *সেকেন্ডারি নম্বর যুক্ত হয়েছে!*\n\n📱 নম্বর: \`${added}\`\nএখন থেকে এই নম্বর থেকেও WhatsApp-এ বটের সাথে কথা বলা ও রিপোর্ট পাওয়া যাবে! 👍`;
+            recordHistory('bot', reply);
+            return reply;
+        } else {
+            const reply = `❌ নম্বরের ফরম্যাটটি বুঝতে পারিনি। অনুগ্রহ করে সঠিক মোবাইল নম্বর লিখুন (যেমন: \`017xxxxxxxx\`)।`;
+            recordHistory('bot', reply);
+            return reply;
+        }
+    }
+
+    // Handle AUTH_NUMBER_LIST
+    if (intent === 'AUTH_NUMBER_LIST') {
+        const reply = storage.formatAuthorizedNumbersList();
+        recordHistory('bot', reply);
+        return reply;
+    }
+
+    // Handle AUTH_NUMBER_REMOVE
+    if (intent === 'AUTH_NUMBER_REMOVE') {
+        const phone = data.phone || cleanText;
+        const removed = storage.removeAuthorizedNumber(phone);
+        if (removed) {
+            const reply = `🗑️ *নম্বরটি সফলভাবে মুছে ফেলা হয়েছে!*`;
+            recordHistory('bot', reply);
+            return reply;
+        } else {
+            const reply = `❓ নম্বরটি তালিকায় পাওয়া যায়নি। 'অনুমোদিত নম্বর' লিখে লিস্ট চেক করুন।`;
+            recordHistory('bot', reply);
+            return reply;
+        }
+    }
+
     // Fallback: Standard or Multi-shot Timer Reminder
     const parsed = await parseReminder(cleanText);
     if (parsed) {
@@ -595,6 +744,9 @@ telegramBot.on('callback_query', async (query) => {
         if (data === 'btn_vault') {
             return telegramBot.sendMessage(chatId, vault.listVaultFiles(), { parse_mode: 'Markdown' });
         }
+        if (data === 'btn_auth_numbers') {
+            return telegramBot.sendMessage(chatId, storage.formatAuthorizedNumbersList(), { parse_mode: 'Markdown' });
+        }
         if (data === 'btn_fin_delete') {
             const deleted = finance.deleteLastTransaction();
             if (deleted) {
@@ -627,24 +779,7 @@ telegramBot.on('callback_query', async (query) => {
 
 // ---------------- WHATSAPP HANDLERS ----------------
 function isAuthorizedWhatsApp(from) {
-    if (!from || from.endsWith('@g.us')) return false;
-
-    const users = storage.getUsers();
-    // If not set yet, first user to interact is authorized
-    if (!users.whatsappChatId) return true;
-
-    if (users.whatsappChatId === from) return true;
-
-    // Match phone digits (ignore @lid, @s.whatsapp.net, device :1)
-    const storedNum = users.whatsappChatId.split('@')[0].split(':')[0];
-    const incomingNum = from.split('@')[0].split(':')[0];
-    if (storedNum === incomingNum) return true;
-
-    // Match configured BOT_PHONE_NUMBER
-    const botNum = (process.env.BOT_PHONE_NUMBER || '').replace(/[^0-9]/g, '');
-    if (botNum && (incomingNum === botNum || storedNum === botNum)) return true;
-
-    return false;
+    return storage.isWhatsAppAuthorized(from);
 }
 
 async function handleWhatsAppText(from, text) {
