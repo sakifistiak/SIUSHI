@@ -176,6 +176,20 @@ http.createServer(async (req, res) => {
             </form>
         </div>
     </div>
+
+    <script>
+        // Auto-refresh when connection status updates
+        setInterval(async () => {
+            try {
+                const res = await fetch('/json');
+                const data = await res.json();
+                const wasConnected = ${isConnected ? 'true' : 'false'};
+                if (data.isConnected !== wasConnected) {
+                    window.location.reload();
+                }
+            } catch (e) {}
+        }, 3000);
+    </script>
 </body>
 </html>`;
 

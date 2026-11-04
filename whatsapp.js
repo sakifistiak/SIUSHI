@@ -116,13 +116,6 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
 
     waSocket.ev.on('creds.update', saveCreds);
 
-    // If pairing code mode is requested and not registered yet
-    if (botNumber && !waSocket.authState.creds.registered) {
-        setTimeout(() => {
-            requestNewPairingCode(botNumber, onPairingCode);
-        }, 4000);
-    }
-
     waSocket.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
@@ -137,15 +130,28 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
 
         if (connection === 'close') {
             isConnected = false;
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log('⚠️ WhatsApp connection closed. Reconnecting:', shouldReconnect);
-            if (shouldReconnect) {
-                startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived, onPairingCode);
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+            console.log(`⚠️ WhatsApp connection closed (Code: ${statusCode || 'unknown'}). Reconnecting: ${shouldReconnect}`);
+
+            if (statusCode === DisconnectReason.loggedOut) {
+                console.log('🚪 WhatsApp session logged out. Clearing auth dir...');
+                if (fs.existsSync(authDir)) {
+                    fs.rmSync(authDir, { recursive: true, force: true });
+                }
+                setTimeout(() => {
+                    startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived, onPairingCode);
+                }, 2000);
+            } else if (shouldReconnect) {
+                setTimeout(() => {
+                    startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived, onPairingCode);
+                }, 3000);
             }
         } else if (connection === 'open') {
             isConnected = true;
             currentPairingCode = null;
             currentQRCodeDataUrl = null;
+            lastPairingError = null;
             console.log('\n✅ WhatsApp is successfully connected and online!\n');
             console.log(`📱 Account ID: ${waSocket.user?.id} | LID: ${waSocket.user?.lid || 'N/A'}`);
         }
