@@ -522,6 +522,7 @@ app.get('/dashboard', requireUser, (req, res) => {
     const monthlySummary = finance.getMonthlySummary(user.id);
     const duesList = dues.getActiveDues(user.id);
     const pendingProjects = clients.getPendingProjects(user.id);
+    const userReminders = storage.getRemindersByUser(user.id);
     const syncCode = usersService.generateLinkCode(user.id);
     const saved = req.query.saved === '1';
 
@@ -815,10 +816,66 @@ app.get('/dashboard', requireUser, (req, res) => {
                 </table>
             </div>
         </div>
+
+        <!-- Active Reminders & Scheduled Alerts -->
+        <div style="margin-bottom: 32px;">
+            <div class="section-header">
+                <div class="section-title">Active Reminders & Scheduled Alerts (${userReminders.length})</div>
+            </div>
+            <div class="table-container">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Task / Purpose</th>
+                            <th>Scheduled Alert Time</th>
+                            <th>Status</th>
+                            <th style="text-align: right;">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${userReminders.map(r => `
+                            <tr>
+                                <td><b>${r.taskText}</b></td>
+                                <td style="color: var(--text-muted); font-size: 12px;">${r.humanReadableTime}</td>
+                                <td>
+                                    <span class="badge badge-green" style="font-size: 10px;">
+                                        <span class="status-dot status-dot-green"></span> Scheduled
+                                    </span>
+                                </td>
+                                <td style="text-align: right;">
+                                    <form action="/dashboard/cancel-reminder" method="POST" style="display: inline;">
+                                        <input type="hidden" name="reminderId" value="${r.id}">
+                                        <button type="submit" class="btn btn-danger-ghost" style="padding: 3px 8px; font-size: 11px;">
+                                            Cancel
+                                        </button>
+                                    </form>
+                                </td>
+                            </tr>
+                        `).join('')}
+                        ${userReminders.length === 0 ? `
+                            <tr>
+                                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 24px;">
+                                    No pending reminders. Set one anytime by messaging the bot on WhatsApp or Telegram (e.g. "10 মিনিট পর ওষুধ খাব" or "কাল সকাল ১০টায় মিটিং").
+                                </td>
+                            </tr>
+                        ` : ''}
+                    </tbody>
+                </table>
+            </div>
+        </div>
     </div>
 </body>
 </html>`;
     res.send(html);
+});
+
+// User cancel reminder endpoint
+app.post('/dashboard/cancel-reminder', requireUser, (req, res) => {
+    const { reminderId } = req.body;
+    if (reminderId) {
+        storage.cancelReminder(reminderId, req.user.id);
+    }
+    res.redirect('/dashboard?saved=1');
 });
 
 // User personal settings update (e.g. Google Sheets webhook)

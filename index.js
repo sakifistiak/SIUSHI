@@ -246,6 +246,72 @@ async function processUserCommand(text, platform, userChatId, userId) {
         return reply;
     }
 
+    // Direct Snooze & Done commands (WhatsApp & Telegram)
+    if (/^(snooze|স্নুজ|১০\s*মিনিট\s*পর|10\s*min\s*por)$/i.test(cleanText)) {
+        const lastRem = storage.getLastReminderByUser(userId);
+        const taskText = lastRem ? lastRem.taskText : 'রিমাইন্ডার';
+        const targetDate = new Date(Date.now() + 10 * 60 * 1000);
+        const newReminder = {
+            id: 'rem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+            userId: userId,
+            taskText: `${taskText} (স্নুজ)`,
+            targetDate: targetDate.toISOString(),
+            humanReadableTime: targetDate.toLocaleString('en-US', { timeZone: 'Asia/Dhaka', hour12: true }),
+            completed: false,
+            createdAt: new Date().toISOString()
+        };
+        storage.addReminder(newReminder);
+        scheduleJob(newReminder);
+        const reply = `⏰ *১০ মিনিটের জন্য স্নুজ করা হলো!*\n📝 বিষয়: ${newReminder.taskText}\n১০ মিনিট পর আবার মনে করিয়ে দেব।`;
+        recordHistory(userId, 'bot', reply);
+        return reply;
+    }
+
+    if (/^(done|কাজ\s*শেষ|শেষ|হয়েছে|সম্পন্ন)$/i.test(cleanText)) {
+        urgent.confirmUrgentTask(userId);
+        const lastRem = storage.getLastReminderByUser(userId);
+        if (lastRem && !lastRem.completed) {
+            storage.markReminderDone(lastRem.id);
+        }
+        const reply = `✅ *কাজটি সম্পন্ন হিসেবে চিহ্নিত করা হলো! অ্যালার্ম ও রিমাইন্ডার বন্ধ।* 👍`;
+        recordHistory(userId, 'bot', reply);
+        return reply;
+    }
+
+    // Active Reminders List
+    if (/^(reminders|reminder\s*list|আমার\s*রিমাইন্ডার|রিমাইন্ডার\s*লিস্ট|রিমাইন্ডারসমূহ)$/i.test(cleanText)) {
+        const active = storage.getRemindersByUser(userId);
+        if (active.length === 0) {
+            const reply = `ℹ️ বর্তমানে আপনার কোনো পেন্ডিং রিমাইন্ডার নেই।\nনতুন রিমাইন্ডার সেট করতে লিখুন:\n- "কাল সকাল ১০টায় মিটিং"\n- "১০ মিনিট পর ওষুধ খাব"`;
+            recordHistory(userId, 'bot', reply);
+            return reply;
+        }
+        let reply = `⏰ *আপনার সক্রিয় রিমাইন্ডারসমূহ (${active.length}টি):*\n━━━━━━━━━━━━━━━━━━━━━\n`;
+        active.forEach((r, idx) => {
+            reply += `${idx + 1}. 📝 *${r.taskText}*\n   ⏰ ${r.humanReadableTime}\n   🆔 \`${r.id}\`\n\n`;
+        });
+        reply += `💡 বাতিল করতে লিখুন: \`রিমাইন্ডার বাতিল [আইডি]\``;
+        recordHistory(userId, 'bot', reply);
+        return reply;
+    }
+
+    // Cancel Reminder
+    if (cleanText.startsWith('রিমাইন্ডার বাতিল') || cleanText.startsWith('/cancel_reminder') || cleanText.startsWith('cancel reminder')) {
+        const targetId = cleanText.replace(/^(?:রিমাইন্ডার\s*বাতিল|cancel\s*reminder|\/cancel_reminder)\s*/i, '').trim();
+        const active = storage.getRemindersByUser(userId);
+        const toCancel = active.find(r => r.id === targetId || r.taskText.toLowerCase().includes(targetId.toLowerCase()));
+        if (toCancel) {
+            storage.cancelReminder(toCancel.id, userId);
+            const reply = `✅ *রিমাইন্ডারটি সফলভাবে বাতিল করা হলো!*\n📝 *${toCancel.taskText}* (${toCancel.humanReadableTime})`;
+            recordHistory(userId, 'bot', reply);
+            return reply;
+        } else {
+            const reply = `❓ রিমাইন্ডারটি পাওয়া যায়নি। আপনার রিমাইন্ডার লিস্ট দেখতে লিখুন: *"আমার রিমাইন্ডার"*`;
+            recordHistory(userId, 'bot', reply);
+            return reply;
+        }
+    }
+
     // AI Intent Classification with User-Specific Context
     const history = getUserHistory(userId);
     const classified = await classifyIntent(cleanText, history);
@@ -592,22 +658,28 @@ telegramBot.on('callback_query', async (query) => {
             }
         }
         if (data.startsWith('done_')) {
+            const remId = data.replace('done_', '');
+            storage.markReminderDone(remId);
             urgent.confirmUrgentTask(user.id);
             return telegramBot.sendMessage(chatId, `✅ *কাজটি সম্পন্ন হিসেবে চিহ্নিত করা হলো! অ্যালার্ম বন্ধ।* 👍`);
         }
         if (data.startsWith('snooze_')) {
+            const oldId = data.replace('snooze_', '');
+            const oldRem = storage.getReminderById(oldId);
+            const taskText = oldRem ? oldRem.taskText : 'রিমাইন্ডার';
+            const targetDate = new Date(Date.now() + 10 * 60 * 1000);
             const newReminder = {
-                id: 'snooze_' + Date.now(),
+                id: 'rem_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
                 userId: user.id,
-                taskText: 'Snoozed Reminder / Task',
-                targetDate: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
-                humanReadableTime: new Date(Date.now() + 10 * 60 * 1000).toLocaleString('en-US', { timeZone: 'Asia/Dhaka', hour12: true }),
+                taskText: `${taskText} (স্নুজ)`,
+                targetDate: targetDate.toISOString(),
+                humanReadableTime: targetDate.toLocaleString('en-US', { timeZone: 'Asia/Dhaka', hour12: true }),
                 completed: false,
                 createdAt: new Date().toISOString()
             };
             storage.addReminder(newReminder);
             scheduleJob(newReminder);
-            return telegramBot.sendMessage(chatId, `⏰ *১০ মিনিটের জন্য স্নুজ করা হলো!* ১০ মিনিট পর আবার মনে করিয়ে দেব।`);
+            return telegramBot.sendMessage(chatId, `⏰ *১০ মিনিটের জন্য স্নুজ করা হলো!*\n📝 বিষয়: ${newReminder.taskText}\n১০ মিনিট পর আবার মনে করিয়ে দেব।`);
         }
     } catch (err) {
         console.error('Callback query error:', err.message);

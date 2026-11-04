@@ -166,13 +166,48 @@ function getPendingReminders() {
     return data.reminders.filter(r => !r.completed);
 }
 
+function getRemindersByUser(userId) {
+    const data = loadData();
+    return data.reminders.filter(r => (!userId || r.userId === userId) && !r.completed);
+}
+
+function getReminderById(id) {
+    const data = loadData();
+    return data.reminders.find(r => r.id === id) || null;
+}
+
+function getLastReminderByUser(userId) {
+    const data = loadData();
+    for (let i = data.reminders.length - 1; i >= 0; i--) {
+        const r = data.reminders[i];
+        if (!userId || r.userId === userId) {
+            return r;
+        }
+    }
+    return null;
+}
+
 function markReminderDone(id) {
     const data = loadData();
     const item = data.reminders.find(r => r.id === id);
     if (item) {
         item.completed = true;
         saveData(data);
+        return true;
     }
+    return false;
+}
+
+function cancelReminder(id, userId) {
+    const data = loadData();
+    const item = data.reminders.find(r => r.id === id && (!userId || r.userId === userId));
+    if (item) {
+        item.completed = true;
+        item.cancelled = true;
+        saveData(data);
+        return item;
+    }
+    return null;
 }
 
 module.exports = {
@@ -188,5 +223,9 @@ module.exports = {
     normalizePhoneNumber,
     addReminder,
     getPendingReminders,
-    markReminderDone
+    getRemindersByUser,
+    getReminderById,
+    getLastReminderByUser,
+    markReminderDone,
+    cancelReminder
 };
