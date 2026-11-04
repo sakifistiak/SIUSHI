@@ -10,6 +10,65 @@ let currentQRCodeDataUrl = null;
 let isConnected = false;
 let lastPairingError = null;
 
+const SESSION_FILE = path.join(__dirname, 'data', 'wa_session.json');
+
+function getSessionBase64() {
+    const authDir = path.join(__dirname, 'baileys_auth_info');
+    if (!fs.existsSync(authDir)) return null;
+    const credsPath = path.join(authDir, 'creds.json');
+    if (!fs.existsSync(credsPath)) return null;
+
+    try {
+        const files = fs.readdirSync(authDir);
+        const bundle = {};
+        for (const file of files) {
+            const filePath = path.join(authDir, file);
+            if (fs.statSync(filePath).isFile()) {
+                bundle[file] = fs.readFileSync(filePath, 'utf-8');
+            }
+        }
+        return Buffer.from(JSON.stringify(bundle)).toString('base64');
+    } catch (e) {
+        console.error('Error generating session base64:', e.message);
+        return null;
+    }
+}
+
+function restoreSessionFromBase64(base64Str) {
+    if (!base64Str || typeof base64Str !== 'string') return false;
+    try {
+        const cleanStr = base64Str.trim().replace(/^['"]|['"]$/g, '');
+        const jsonStr = Buffer.from(cleanStr, 'base64').toString('utf-8');
+        const bundle = JSON.parse(jsonStr);
+        if (!bundle || !bundle['creds.json']) return false;
+
+        const authDir = path.join(__dirname, 'baileys_auth_info');
+        if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
+
+        for (const [filename, content] of Object.entries(bundle)) {
+            fs.writeFileSync(path.join(authDir, filename), content, 'utf-8');
+        }
+        console.log(`[WhatsApp Auth] Restored ${Object.keys(bundle).length} auth files from session token.`);
+        return true;
+    } catch (err) {
+        console.error('[WhatsApp Auth] Failed to restore session from base64:', err.message);
+        return false;
+    }
+}
+
+function persistSessionLocally() {
+    try {
+        const token = getSessionBase64();
+        if (token) {
+            const dir = path.dirname(SESSION_FILE);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            fs.writeFileSync(SESSION_FILE, JSON.stringify({ token, updatedAt: new Date().toISOString() }, null, 2));
+        }
+    } catch (e) {
+        // ignore
+    }
+}
+
 // Track message IDs sent by the bot to avoid self-reply loops
 const botSentMessageIds = new Set();
 
@@ -109,6 +168,26 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
         fs.mkdirSync(authDir, { recursive: true });
     }
 
+    // Auto-restore session from environment variable or local persistent store if auth dir is empty
+    const credsPath = path.join(authDir, 'creds.json');
+    if (!fs.existsSync(credsPath)) {
+        const envToken = process.env.WA_SESSION_DATA || process.env.WA_SESSION_BASE64;
+        if (envToken) {
+            console.log('[WhatsApp Auth] Restoring session from WA_SESSION_DATA environment variable...');
+            restoreSessionFromBase64(envToken);
+        } else if (fs.existsSync(SESSION_FILE)) {
+            try {
+                const saved = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf-8'));
+                if (saved.token) {
+                    console.log('[WhatsApp Auth] Restoring session from persistent session file...');
+                    restoreSessionFromBase64(saved.token);
+                }
+            } catch (e) {
+                // ignore
+            }
+        }
+    }
+
     const { state, saveCreds } = await useMultiFileAuthState(authDir);
     const botNumber = process.env.BOT_PHONE_NUMBER ? process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '') : null;
 
@@ -123,7 +202,10 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
         defaultQueryTimeoutMs: 60000
     });
 
-    waSocket.ev.on('creds.update', saveCreds);
+    waSocket.ev.on('creds.update', async () => {
+        await saveCreds();
+        persistSessionLocally();
+    });
 
     waSocket.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -283,7 +365,8 @@ function getWhatsAppStatus() {
         isConnected,
         currentPairingCode,
         currentQRCodeDataUrl,
-        lastPairingError
+        lastPairingError,
+        sessionBase64: getSessionBase64()
     };
 }
 
@@ -293,5 +376,7 @@ module.exports = {
     sendWhatsAppFile,
     requestNewPairingCode,
     getWhatsAppStatus,
+    getSessionBase64,
+    restoreSessionFromBase64,
     normalizeJid
 };

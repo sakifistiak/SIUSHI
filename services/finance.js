@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const sheetsService = require('./sheets');
 
 const DB_PATH = path.join(__dirname, '..', 'data', 'finance.json');
 
@@ -51,6 +52,22 @@ function addTransaction(userId, { type, amount, category, note }) {
 
     list.push(item);
     saveTransactions(list);
+
+    // Asynchronous non-blocking dispatch to Google Sheets webhook
+    try {
+        const usersService = require('./users');
+        const user = usersService.getUserById(userId);
+        const settings = usersService.getSettings();
+        const webhookUrl = (user && user.googleSheetsWebhookUrl) || settings.googleSheetsWebhookUrl || process.env.GOOGLE_SHEETS_WEBHOOK_URL;
+        if (webhookUrl) {
+            sheetsService.syncTransactionToSheet(item, user, webhookUrl).catch(e => {
+                console.warn('[Sheets Sync Background]:', e.message);
+            });
+        }
+    } catch (e) {
+        // Non-blocking
+    }
+
     return item;
 }
 

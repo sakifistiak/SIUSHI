@@ -151,7 +151,7 @@ function authenticateUser(login, password) {
     return { success: true, user };
 }
 
-function updateUserPlan(userId, { plan, status, expiresAt, name, phone }) {
+function updateUserPlan(userId, { plan, status, expiresAt, name, phone, googleSheetsWebhookUrl }) {
     const data = loadUsersData();
     const user = data.users.find(u => u.id === userId);
     if (!user) return null;
@@ -160,6 +160,7 @@ function updateUserPlan(userId, { plan, status, expiresAt, name, phone }) {
     if (status !== undefined) user.status = status;
     if (expiresAt !== undefined) user.planExpiresAt = expiresAt;
     if (name !== undefined) user.name = name;
+    if (googleSheetsWebhookUrl !== undefined) user.googleSheetsWebhookUrl = googleSheetsWebhookUrl.trim();
     if (phone !== undefined) {
         user.phone = normalizePhone(phone);
         user.whatsappPhone = user.phone;

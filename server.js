@@ -6,7 +6,8 @@ const finance = require('./services/finance');
 const dues = require('./services/dues');
 const clients = require('./services/clients');
 const storage = require('./storage');
-const { getWhatsAppStatus, requestNewPairingCode } = require('./whatsapp');
+const sheetsService = require('./services/sheets');
+const { getWhatsAppStatus, requestNewPairingCode, getSessionBase64, restoreSessionFromBase64 } = require('./whatsapp');
 
 const app = express();
 
@@ -34,7 +35,7 @@ function requireUser(req, res, next) {
     return res.redirect('/?tab=login');
 }
 
-// Common Developer-Grade CSS Stylesheet
+// Common Developer-Grade CSS Stylesheet (Strictly Zero Emojis)
 const BASE_STYLES = `
 :root {
     --bg: #090d16;
@@ -65,7 +66,7 @@ body {
     -webkit-font-smoothing: antialiased;
 }
 a { color: inherit; text-decoration: none; }
-button, input, select {
+button, input, select, textarea {
     font-family: inherit;
 }
 .btn {
@@ -73,7 +74,7 @@ button, input, select {
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 9px 16px;
+    padding: 8px 15px;
     border-radius: 6px;
     font-size: 13px;
     font-weight: 500;
@@ -167,12 +168,12 @@ button, input, select {
 }
 .form-label {
     display: block;
-    font-size: 12px;
-    font-weight: 500;
+    font-size: 11px;
+    font-weight: 600;
     color: var(--text-muted);
     margin-bottom: 6px;
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
 }
 .alert {
     padding: 12px 14px;
@@ -227,17 +228,29 @@ button, input, select {
 .data-table tr:hover td {
     background-color: rgba(255, 255, 255, 0.02);
 }
+pre.code-block {
+    background-color: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+    color: #cbd5e1;
+    overflow-x: auto;
+    line-height: 1.45;
+}
 `;
 
-// Clean SVG Icons
+// Clean SVG Icons (Enterprise Vector Marks)
 const ICONS = {
     terminal: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>`,
     lock: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>`,
     check: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`,
-    arrowRight: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>`,
     refresh: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>`,
     logout: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>`,
-    copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`
+    copy: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`,
+    download: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>`,
+    sheet: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>`
 };
 
 // ---------------- 1. PUBLIC ROUTES ----------------
@@ -389,7 +402,7 @@ app.get('/', (req, res) => {
                 <span class="badge badge-blue">ENTERPRISE AUTOMATION GATEWAY</span>
             </div>
             <h1 class="hero-headline">Autonomous Operations Platform for Professionals</h1>
-            <p class="hero-subhead">Unified double-entry financial ledger, client deliverable schedules, and background automation dispatched bi-directionally over WhatsApp and Telegram.</p>
+            <p class="hero-subhead">Unified double-entry financial ledger, Google Sheets real-time synchronization, and client deliverables orchestrated seamlessly over WhatsApp and Telegram.</p>
 
             <div class="feature-list">
                 <div class="feature-item">
@@ -398,15 +411,15 @@ app.get('/', (req, res) => {
                 </div>
                 <div class="feature-item">
                     <span>${ICONS.check}</span>
-                    <span>Comprehensive counterparty receivables and liabilities ledger.</span>
+                    <span>Live Google Sheets sync and one-click Excel / CSV exports.</span>
                 </div>
                 <div class="feature-item">
                     <span>${ICONS.check}</span>
-                    <span>Client project workflow tracking and daily 9:00 AM status briefings.</span>
+                    <span>Counterparty receivables and liabilities ledger management.</span>
                 </div>
                 <div class="feature-item">
                     <span>${ICONS.check}</span>
-                    <span>Direct conversational interface with natural language understanding.</span>
+                    <span>Direct conversational interface with natural language comprehension.</span>
                 </div>
             </div>
         </div>
@@ -510,6 +523,7 @@ app.get('/dashboard', requireUser, (req, res) => {
     const duesList = dues.getActiveDues(user.id);
     const pendingProjects = clients.getPendingProjects(user.id);
     const syncCode = usersService.generateLinkCode(user.id);
+    const saved = req.query.saved === '1';
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -591,11 +605,18 @@ app.get('/dashboard', requireUser, (req, res) => {
             margin-bottom: 14px;
         }
         .section-title {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.04em;
             color: var(--text-muted);
+        }
+        .settings-card {
+            background-color: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 22px;
+            margin-bottom: 32px;
         }
     </style>
 </head>
@@ -608,7 +629,11 @@ app.get('/dashboard', requireUser, (req, res) => {
             </div>
             <span class="badge badge-neutral" style="font-size: 10px;">WORKSPACE</span>
         </div>
-        <div style="display: flex; align-items: center; gap: 16px;">
+        <div style="display: flex; align-items: center; gap: 14px;">
+            <a href="/api/export/transactions.csv" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
+                ${ICONS.download}
+                Export CSV / Excel
+            </a>
             <span class="badge ${user.plan === 'business' ? 'badge-blue' : user.plan === 'pro' ? 'badge-blue' : 'badge-neutral'}">
                 Plan: ${user.plan}
             </span>
@@ -623,6 +648,8 @@ app.get('/dashboard', requireUser, (req, res) => {
     </nav>
 
     <div class="app-container">
+        ${saved ? `<div class="alert alert-success">Your personal configuration settings have been updated.</div>` : ''}
+
         <!-- Messaging Gateway Sync Banner -->
         <div class="sync-banner">
             <div>
@@ -669,6 +696,46 @@ app.get('/dashboard', requireUser, (req, res) => {
                 <div class="kpi-label">Monthly Expenditure</div>
                 <div class="kpi-value" style="color: #fbbf24;">${monthlySummary.totalExpense.toLocaleString()} BDT</div>
             </div>
+        </div>
+
+        <!-- Google Sheets Real-Time Sync Configuration -->
+        <div class="settings-card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <div style="font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;">
+                    ${ICONS.sheet} Google Sheets Real-Time Synchronization
+                </div>
+                <a href="/api/export/transactions.csv" class="btn btn-secondary" style="font-size: 12px;">
+                    ${ICONS.download}
+                    Download Excel / CSV
+                </a>
+            </div>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px; line-height: 1.5;">
+                Every transaction logged via WhatsApp, Telegram, or Web can be automatically recorded in your own Google Sheet in real time.
+            </p>
+
+            <form action="/dashboard/settings" method="POST" style="margin-bottom: 16px;">
+                <div style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+                    <div style="flex: 1; min-width: 280px;">
+                        <label class="form-label">Google Apps Script Webhook URL</label>
+                        <input type="url" name="googleSheetsWebhookUrl" class="form-input" value="${user.googleSheetsWebhookUrl || ''}" placeholder="https://script.google.com/macros/s/.../exec">
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="padding: 10px 18px;">
+                        Save Webhook URL
+                    </button>
+                </div>
+            </form>
+
+            <details style="font-size: 12px; color: var(--text-muted); margin-top: 10px;">
+                <summary style="cursor: pointer; color: #93c5fd; font-weight: 500;">
+                    Click to view Google Apps Script Setup Instructions & Code Snippet
+                </summary>
+                <div style="margin-top: 10px;">
+                    <p style="margin-bottom: 8px;">1. Open a Google Sheet &gt; Click <b>Extensions &gt; Apps Script</b></p>
+                    <p style="margin-bottom: 8px;">2. Paste the code below &gt; Click <b>Deploy &gt; New deployment &gt; Select 'Web app' &gt; Who has access: 'Anyone'</b></p>
+                    <p style="margin-bottom: 12px;">3. Copy the generated Web App URL and paste it into the field above.</p>
+                    <pre class="code-block">${sheetsService.APPS_SCRIPT_TEMPLATE}</pre>
+                </div>
+            </details>
         </div>
 
         <!-- Accounts Receivable & Payable -->
@@ -752,6 +819,42 @@ app.get('/dashboard', requireUser, (req, res) => {
 </body>
 </html>`;
     res.send(html);
+});
+
+// User personal settings update (e.g. Google Sheets webhook)
+app.post('/dashboard/settings', requireUser, (req, res) => {
+    const { googleSheetsWebhookUrl } = req.body;
+    usersService.updateUserPlan(req.user.id, { googleSheetsWebhookUrl });
+    res.redirect('/dashboard?saved=1');
+});
+
+// Export CSV / Excel for User or Admin
+app.get('/api/export/transactions.csv', (req, res) => {
+    const isAdmin = req.cookies.siusho_admin === 'authenticated';
+    const userId = req.cookies.siusho_user;
+
+    if (!isAdmin && !userId) {
+        return res.status(401).send('Unauthorized. Please log in.');
+    }
+
+    const allUsers = usersService.getAllUsers();
+    const usersMap = {};
+    for (const u of allUsers) {
+        usersMap[u.id] = u;
+    }
+
+    const storageFinance = require('./services/finance');
+    let transactions = storageFinance.getTransactions();
+
+    // If not admin, restrict strictly to the authenticated user's transactions
+    if (!isAdmin) {
+        transactions = transactions.filter(t => t.userId === userId);
+    }
+
+    const csvContent = sheetsService.generateCSV(transactions, usersMap);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="siusho_ledger_export.csv"');
+    res.send(csvContent);
 });
 
 // ---------------- 3. ADMIN PORTAL (SECURED WITH PASSWORD) ----------------
@@ -854,12 +957,45 @@ app.post('/admin/user-update', requireAdmin, (req, res) => {
     res.redirect('/admin');
 });
 
-// Update pricing settings from Admin Panel
+// Restore WhatsApp session from Base64 Token
+app.post('/admin/restore-session', requireAdmin, (req, res) => {
+    const { sessionToken } = req.body;
+    if (sessionToken && sessionToken.trim()) {
+        const success = restoreSessionFromBase64(sessionToken.trim());
+        if (success) {
+            return res.redirect('/admin?saved=1');
+        }
+    }
+    return res.redirect('/admin?error=' + encodeURIComponent('Invalid session token format.'));
+});
+
+// Sync all transactions to Google Sheet from Admin
+app.post('/admin/sync-sheets', requireAdmin, async (req, res) => {
+    const settings = usersService.getSettings();
+    const webhookUrl = settings.googleSheetsWebhookUrl || process.env.GOOGLE_SHEETS_WEBHOOK_URL;
+    if (!webhookUrl) {
+        return res.redirect('/admin?error=' + encodeURIComponent('Configure a Google Sheets Webhook URL first.'));
+    }
+
+    const allUsers = usersService.getAllUsers();
+    const usersMap = {};
+    for (const u of allUsers) usersMap[u.id] = u;
+
+    const storageFinance = require('./services/finance');
+    const transactions = storageFinance.getTransactions();
+
+    await sheetsService.syncBatchToSheet(transactions, usersMap, webhookUrl);
+    res.redirect('/admin?saved=1');
+});
+
+// Update pricing settings & Google Sheets Webhook from Admin Panel
 app.post('/admin/settings-update', requireAdmin, (req, res) => {
-    const { proPrice, businessPrice, adminPassword } = req.body;
+    const { proPrice, businessPrice, adminPassword, googleSheetsWebhookUrl } = req.body;
     const settings = usersService.getSettings();
     if (proPrice) settings.pricing.pro.price = parseInt(proPrice, 10);
     if (businessPrice) settings.pricing.business.price = parseInt(businessPrice, 10);
+    if (googleSheetsWebhookUrl !== undefined) settings.googleSheetsWebhookUrl = googleSheetsWebhookUrl.trim();
+
     if (adminPassword && adminPassword.trim().length >= 6) {
         usersService.updateSettings({ ...settings, adminPassword: adminPassword.trim() });
     } else {
@@ -875,10 +1011,11 @@ app.get('/admin/status-json', requireAdmin, (req, res) => {
 
 // Main Admin Panel
 app.get('/admin', requireAdmin, (req, res) => {
-    const { isConnected, currentPairingCode, currentQRCodeDataUrl, lastPairingError } = getWhatsAppStatus();
+    const { isConnected, currentPairingCode, currentQRCodeDataUrl, lastPairingError, sessionBase64 } = getWhatsAppStatus();
     const allUsers = usersService.getAllUsers();
     const settings = usersService.getSettings();
     const saved = req.query.saved === '1';
+    const error = req.query.error || '';
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -925,7 +1062,7 @@ app.get('/admin', requireAdmin, (req, res) => {
             border-bottom: 1px solid var(--border-subtle);
         }
         .panel-title {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.04em;
@@ -978,6 +1115,10 @@ app.get('/admin', requireAdmin, (req, res) => {
             <span class="badge badge-amber" style="font-size: 10px;">ADMIN CONSOLE</span>
         </div>
         <div style="display: flex; align-items: center; gap: 14px;">
+            <a href="/api/export/transactions.csv" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">
+                ${ICONS.download}
+                Export Master CSV
+            </a>
             <a href="/dashboard" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px;">User Dashboard</a>
             <a href="/admin/logout" class="btn btn-danger-ghost" style="font-size: 12px; padding: 6px 12px;">
                 ${ICONS.logout}
@@ -988,6 +1129,7 @@ app.get('/admin', requireAdmin, (req, res) => {
 
     <div class="admin-container">
         ${saved ? `<div class="alert alert-success">Configuration settings have been successfully persisted.</div>` : ''}
+        ${error ? `<div class="alert alert-error">${error}</div>` : ''}
 
         <div class="grid-layout">
             <!-- 1. Central WhatsApp Gateway Host -->
@@ -1024,36 +1166,79 @@ app.get('/admin', requireAdmin, (req, res) => {
                         </div>
                     </div>
                 ` : `
-                    <div style="margin-top: 20px; padding: 16px; background-color: var(--success-bg); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px;">
-                        <div style="font-weight: 600; font-size: 14px; color: var(--success); margin-bottom: 4px;">Host Gateway Operational</div>
-                        <div style="font-size: 13px; color: var(--text-muted);">
+                    <div style="margin-top: 16px; padding: 14px; background-color: var(--success-bg); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 6px;">
+                        <div style="font-weight: 600; font-size: 13px; color: var(--success); margin-bottom: 2px;">Host Gateway Operational</div>
+                        <div style="font-size: 12px; color: var(--text-muted);">
                             The central bot host session is live and actively dispatching conversational events.
                         </div>
                     </div>
                 `}
+
+                <!-- Session Persistence & Token (Fix Logout across Render Deployments) -->
+                <div style="border-top: 1px solid var(--border-subtle); padding-top: 18px; margin-top: 20px;">
+                    <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); margin-bottom: 6px;">
+                        Session Persistence Token (Prevent Logout on Deploy)
+                    </div>
+                    <p style="font-size: 12px; color: var(--text-subtle); margin-bottom: 12px; line-height: 1.45;">
+                        Render disks are ephemeral. Copy this token and add it to your <b>Render Environment Variables</b> as <code>WA_SESSION_DATA</code>. Once set, WhatsApp will <b>never</b> log out on code pushes!
+                    </p>
+                    
+                    ${sessionBase64 ? `
+                        <div style="display: flex; gap: 8px; margin-bottom: 14px;">
+                            <input type="text" class="form-input" id="sessionTokenInput" value="${sessionBase64}" readonly style="font-family: monospace; font-size: 11px;">
+                            <button type="button" class="btn btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('sessionTokenInput').value); this.innerText='Copied';" style="white-space: nowrap; font-size: 12px;">
+                                ${ICONS.copy} Copy Token
+                            </button>
+                        </div>
+                    ` : '<div style="font-size: 12px; color: var(--text-subtle); margin-bottom: 12px;">Session token will be generated once linked.</div>'}
+
+                    <!-- Manual Restore Form -->
+                    <form action="/admin/restore-session" method="POST" style="margin-top: 10px;">
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" name="sessionToken" class="form-input" placeholder="Paste existing WA_SESSION_DATA token to restore..." required style="font-size: 12px;">
+                            <button type="submit" class="btn btn-secondary" style="white-space: nowrap; font-size: 12px;">
+                                Restore Session
+                            </button>
+                        </div>
+                    </form>
+                </div>
             </div>
 
             <!-- 2. System Configuration & Pricing -->
             <div class="panel-card">
                 <div class="panel-header">
-                    <span class="panel-title">System & Billing Configuration</span>
+                    <span class="panel-title">System & Accounting Configuration</span>
                 </div>
                 <form action="/admin/settings-update" method="POST">
+                    <div style="margin-bottom: 14px;">
+                        <label class="form-label">Master Google Sheets Webhook URL</label>
+                        <input type="url" name="googleSheetsWebhookUrl" class="form-input" value="${settings.googleSheetsWebhookUrl || ''}" placeholder="https://script.google.com/macros/s/.../exec">
+                        <span style="font-size: 11px; color: var(--text-subtle);">All user transactions will mirror to this master spreadsheet in real-time.</span>
+                    </div>
+
                     <div style="margin-bottom: 14px;">
                         <label class="form-label">Pro Tier Rate (BDT / Month)</label>
                         <input type="number" name="proPrice" class="form-input" value="${settings.pricing.pro?.price || 299}" required>
                     </div>
+
                     <div style="margin-bottom: 14px;">
                         <label class="form-label">Business Tier Rate (BDT / Month)</label>
                         <input type="number" name="businessPrice" class="form-input" value="${settings.pricing.business?.price || 799}" required>
                     </div>
+
                     <div style="margin-bottom: 18px;">
                         <label class="form-label">Update Master Admin Password</label>
                         <input type="password" name="adminPassword" class="form-input" placeholder="Leave empty to retain existing secret">
                     </div>
-                    <button type="submit" class="btn btn-primary" style="font-size: 13px;">
-                        Save Configuration
-                    </button>
+
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <button type="submit" class="btn btn-primary" style="font-size: 13px;">
+                            Save Configuration
+                        </button>
+                        <button type="submit" formaction="/admin/sync-sheets" class="btn btn-secondary" style="font-size: 13px;">
+                            ${ICONS.sheet} Batch Sync All to Google Sheet
+                        </button>
+                    </div>
                 </form>
             </div>
         </div>
@@ -1070,6 +1255,7 @@ app.get('/admin', requireAdmin, (req, res) => {
                             <th>User Name</th>
                             <th>Identifier</th>
                             <th>Gateway Sync</th>
+                            <th>Google Sheet</th>
                             <th>Subscription Plan</th>
                             <th>Account Status</th>
                             <th>Registered</th>
@@ -1086,6 +1272,11 @@ app.get('/admin', requireAdmin, (req, res) => {
                                         ${u.telegramChatId ? '<span class="badge badge-blue" style="font-size: 10px;">Telegram</span>' : ''}
                                         ${!u.whatsappJid && !u.telegramChatId ? '<span class="badge badge-neutral" style="font-size: 10px;">Unlinked</span>' : ''}
                                     </div>
+                                </td>
+                                <td>
+                                    <span class="badge ${u.googleSheetsWebhookUrl ? 'badge-green' : 'badge-neutral'}" style="font-size: 10px;">
+                                        ${u.googleSheetsWebhookUrl ? 'Active' : 'None'}
+                                    </span>
                                 </td>
                                 <td>
                                     <form action="/admin/user-update" method="POST" style="display: inline;">
@@ -1110,7 +1301,7 @@ app.get('/admin', requireAdmin, (req, res) => {
                         `).join('')}
                         ${allUsers.length === 0 ? `
                             <tr>
-                                <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 24px;">
+                                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 24px;">
                                     No accounts registered yet.
                                 </td>
                             </tr>
