@@ -23,151 +23,16 @@ if (!TELEGRAM_TOKEN) {
     process.exit(1);
 }
 
-const http = require('http');
-const PORT = process.env.PORT || 3000;
-
 // Ensure local directories exist
 ['./data', './vault_files'].forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 });
 
-// Dashboard and Health check server
-http.createServer(async (req, res) => {
-    const host = req.headers.host || 'localhost';
-    const parsedUrl = new URL(req.url, `http://${host}`);
-    const pathname = parsedUrl.pathname;
+const serverApp = require('./server');
+const PORT = process.env.PORT || 3000;
 
-    if (pathname === '/request-code') {
-        const botNumber = process.env.BOT_PHONE_NUMBER;
-        await requestNewPairingCode(botNumber, handlePairingCode);
-        res.writeHead(302, { Location: '/' });
-        return res.end();
-    }
-
-    if (pathname === '/json') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        return res.end(JSON.stringify({
-            ...getWhatsAppStatus(),
-            totalUsers: usersService.getAllUsers().length
-        }));
-    }
-
-    const { isConnected, currentPairingCode, currentQRCodeDataUrl, lastPairingError } = getWhatsAppStatus();
-    const allRegisteredUsers = usersService.getAllUsers();
-
-    const html = `<!DOCTYPE html>
-<html lang="bn">
-<head>
-    <meta charset="UTF-8">
-    <title>SIUSHO AI Assistant Dashboard</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; text-align: center; margin: 0; }
-        .card { background: #1e293b; max-width: 520px; margin: 30px auto; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #334155; }
-        h1 { margin-top: 0; font-size: 26px; color: #38bdf8; }
-        .status-row { display: flex; justify-content: space-between; align-items: center; margin: 12px 0; padding: 12px 18px; background: #0f172a; border-radius: 12px; font-weight: 500; font-size: 14px; }
-        .badge { padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
-        .badge-green { background: #065f46; color: #34d399; }
-        .badge-yellow { background: #78350f; color: #fbbf24; }
-        .code-box { background: #0284c7; color: #fff; font-size: 32px; font-weight: 800; letter-spacing: 5px; padding: 18px; border-radius: 14px; margin: 25px 0 15px 0; user-select: all; box-shadow: 0 0 20px rgba(56, 189, 248, 0.4); }
-        .instruction { font-size: 13px; color: #94a3b8; line-height: 1.6; text-align: left; background: #0f172a; padding: 15px; border-radius: 12px; margin-top: 20px; }
-        .btn { display: inline-block; background: #38bdf8; color: #0f172a; font-weight: 700; text-decoration: none; padding: 12px 24px; border-radius: 10px; margin-top: 15px; transition: 0.2s; }
-        .btn:hover { background: #7dd3fc; }
-        .error { color: #f87171; font-size: 13px; margin-top: 10px; }
-        .users-box { margin-top: 25px; text-align: left; background: #0f172a; padding: 20px; border-radius: 14px; border: 1px solid #334155; }
-        .user-item { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid #1e293b; font-size: 13px; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <h1>🤖 SIUSHO Assistant</h1>
-        <p style="color: #94a3b8; font-size: 14px; margin-bottom: 25px;">Multi-User Cloud AI Assistant & WhatsApp Host</p>
-
-        <div class="status-row">
-            <span>Telegram Bot</span>
-            <span class="badge badge-green">Connected ✅</span>
-        </div>
-
-        <div class="status-row">
-            <span>WhatsApp Bot Host</span>
-            <span class="badge ${isConnected ? 'badge-green' : 'badge-yellow'}">
-                ${isConnected ? 'Online & Linked ✅' : 'Waiting for Pairing ⏳'}
-            </span>
-        </div>
-
-        <div class="status-row">
-            <span>সক্রিয় ব্যবহারকারী (Active Users)</span>
-            <span class="badge badge-green">${allRegisteredUsers.length} জন</span>
-        </div>
-
-        ${!isConnected ? `
-            ${currentQRCodeDataUrl ? `
-                <div style="margin: 20px 0;">
-                    <p style="font-weight: 600; font-size: 16px; color: #38bdf8;">📲 ক্যামেরা দিয়ে নিচের QR কোডটি স্ক্যান করুন:</p>
-                    <img src="${currentQRCodeDataUrl}" style="width: 250px; height: 250px; border-radius: 14px; background: #fff; padding: 10px; box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);" />
-                </div>
-            ` : ''}
-
-            <div style="margin: 20px 0; border-top: 1px solid #334155; padding-top: 15px;">
-                <p style="font-size: 14px; color: #94a3b8;">অথবা ৮-সংখ্যার কোড দিয়ে লিংক করতে চাইলে:</p>
-                <div class="code-box">${currentPairingCode || 'Generating...'}</div>
-                <a href="/request-code" class="btn">🔄 নতুন কোড / QR রিফ্রেশ</a>
-            </div>
-
-            ${lastPairingError ? `<div class="error">⚠️ ${lastPairingError}</div>` : ''}
-
-            <div class="instruction">
-                📱 <b>হোস্ট ডিভাইস লিঙ্ক করার নিয়ম:</b><br>
-                1. আপনার মোবাইলের <b>WhatsApp</b> খুলুন।<br>
-                2. <b>Linked Devices &gt; Link a Device</b>-এ যান।<br>
-                3. ক্যামেরা দিয়ে উপরের <b>QR কোডটি স্ক্যান করুন</b>!
-            </div>
-        ` : `
-            <div style="margin-top: 20px; padding: 16px; background: #064e3b; border-radius: 14px; color: #6ee7b7; font-size: 14px;">
-                🎉 <b>WhatsApp Host অনলাইন!</b> মাল্টি-ইউজার অ্যাসিস্ট্যান্ট সম্পূর্ণ প্রস্তুত।
-            </div>
-        `}
-
-        <div class="users-box">
-            <h3 style="margin: 0 0 8px 0; font-size: 15px; color: #38bdf8;">
-                👥 নিবন্ধিত ব্যবহারকারী তালিকা (${allRegisteredUsers.length} জন)
-            </h3>
-            <p style="font-size: 12px; color: #94a3b8; margin: 0 0 12px 0;">প্রত্যেক ব্যবহারকারীর আয়-ব্যয়, দেনা-পাওনা ও রিমাইন্ডার সম্পূর্ণ আলাদা ও সুরক্ষিত।</p>
-
-            ${allRegisteredUsers.map((u, i) => `
-                <div class="user-item">
-                    <span><b>${i + 1}. ${u.name}</b></span>
-                    <span style="color: #94a3b8; font-size: 12px;">
-                        ${u.whatsappJid ? '📱 WhatsApp' : ''}
-                        ${u.whatsappJid && u.telegramChatId ? ' | ' : ''}
-                        ${u.telegramChatId ? '🤖 Telegram' : ''}
-                    </span>
-                </div>
-            `).join('')}
-
-            ${allRegisteredUsers.length === 0 ? '<p style="color: #64748b; font-size: 13px; margin: 10px 0;">এখনো কোনো ইউজার মেসেজ দেয়নি। WhatsApp বা Telegram-এ মেসেজ দিলে অটো-রেজিস্টার হবে।</p>' : ''}
-        </div>
-    </div>
-
-    <script>
-        setInterval(async () => {
-            try {
-                const res = await fetch('/json');
-                const data = await res.json();
-                const wasConnected = ${isConnected ? 'true' : 'false'};
-                if (data.isConnected !== wasConnected) {
-                    window.location.reload();
-                }
-            } catch (e) {}
-        }, 3000);
-    </script>
-</body>
-</html>`;
-
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(html);
-}).listen(PORT, () => {
-    console.log(`🌐 Dashboard web server listening on port ${PORT}`);
+serverApp.listen(PORT, () => {
+    console.log(`🌐 SIUSHO SaaS Platform & Admin Panel listening on port ${PORT}`);
 });
 
 // Auto Self-Ping to prevent Render free instance from sleeping
@@ -187,7 +52,7 @@ if (pingTarget) {
 // 1. Initialize Telegram Bot
 const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 telegramBot.on('polling_error', (err) => {
-    if (err.message && err.message.includes('409 Conflict')) return;
+    if (err.message && (err.message.includes('409 Conflict') || err.message.includes('EFATAL') || err.message.includes('AggregateError'))) return;
     console.warn('[Telegram Polling]:', err.message);
 });
 console.log('🤖 Telegram Bot (SIUSHO) is initialized and listening!');
