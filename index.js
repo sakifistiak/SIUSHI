@@ -54,6 +54,10 @@ if (pingTarget) {
 
 // 1. Initialize Telegram Bot
 const telegramBot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
+telegramBot.on('polling_error', (err) => {
+    if (err.message && err.message.includes('409 Conflict')) return;
+    console.warn('[Telegram Polling]:', err.message);
+});
 console.log('🤖 Telegram Bot (SIUSHO) is initialized and listening!');
 
 // Quick Action Menu Keyboard
