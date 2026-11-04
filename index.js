@@ -181,9 +181,11 @@ async function sendDualNotification(messageText, options = {}) {
         }
     }
 
-    if (users.whatsappChatId) {
+    const waTarget = users.whatsappChatId || (process.env.BOT_PHONE_NUMBER ? `${process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '')}@s.whatsapp.net` : null);
+
+    if (waTarget) {
         try {
-            sentWhatsApp = await sendWhatsAppMessage(users.whatsappChatId, messageText);
+            sentWhatsApp = await sendWhatsAppMessage(waTarget, messageText);
         } catch (err) {
             console.error('Failed to send WhatsApp notification:', err.message);
         }
@@ -207,9 +209,11 @@ async function sendDualFile(filePath, caption, mimeType) {
         }
     }
 
-    if (users.whatsappChatId) {
+    const waTarget = users.whatsappChatId || (process.env.BOT_PHONE_NUMBER ? `${process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '')}@s.whatsapp.net` : null);
+
+    if (waTarget) {
         try {
-            await sendWhatsAppFile(users.whatsappChatId, filePath, caption, mimeType);
+            await sendWhatsAppFile(waTarget, filePath, caption, mimeType);
         } catch (err) {
             console.error('Failed to send WhatsApp file:', err.message);
         }
@@ -622,15 +626,42 @@ telegramBot.on('callback_query', async (query) => {
 });
 
 // ---------------- WHATSAPP HANDLERS ----------------
-async function handleWhatsAppText(from, text) {
-    if (from.endsWith('@g.us')) return;
+function isAuthorizedWhatsApp(from) {
+    if (!from || from.endsWith('@g.us')) return false;
 
     const users = storage.getUsers();
-    if (users.whatsappChatId && users.whatsappChatId !== from) return;
+    // If not set yet, first user to interact is authorized
+    if (!users.whatsappChatId) return true;
 
+    if (users.whatsappChatId === from) return true;
+
+    // Match phone digits (ignore @lid, @s.whatsapp.net, device :1)
+    const storedNum = users.whatsappChatId.split('@')[0].split(':')[0];
+    const incomingNum = from.split('@')[0].split(':')[0];
+    if (storedNum === incomingNum) return true;
+
+    // Match configured BOT_PHONE_NUMBER
+    const botNum = (process.env.BOT_PHONE_NUMBER || '').replace(/[^0-9]/g, '');
+    if (botNum && (incomingNum === botNum || storedNum === botNum)) return true;
+
+    return false;
+}
+
+async function handleWhatsAppText(from, text) {
+    if (!from || from.endsWith('@g.us')) return;
+
+    if (!isAuthorizedWhatsApp(from)) {
+        console.warn(`[Security] Blocked unauthorized WhatsApp message from: ${from}`);
+        return;
+    }
+
+    const users = storage.getUsers();
     if (!users.whatsappChatId) {
         storage.setWhatsAppUser(from);
+        console.log(`👤 Linked WhatsApp User ID: ${from}`);
     }
+
+    console.log(`💬 Processing WhatsApp command from ${from}: "${text}"`);
 
     if (text === '/start') {
         return sendWhatsAppMessage(from,
@@ -647,13 +678,13 @@ async function handleWhatsAppText(from, text) {
 
     const reply = await processUserCommand(text, 'whatsapp', from);
     if (reply) {
+        console.log(`📤 [WhatsApp Reply] To: ${from} | Reply: "${reply.slice(0, 50)}..."`);
         return sendWhatsAppMessage(from, reply);
     }
 }
 
 async function handleWhatsAppVoice(from, audioBuffer, mimeType) {
-    const users = storage.getUsers();
-    if (users.whatsappChatId && users.whatsappChatId !== from) return;
+    if (!isAuthorizedWhatsApp(from)) return;
 
     try {
         await sendWhatsAppMessage(from, '🎙️ আপনার ভয়েস মেসেজ শুনছি...');
@@ -674,11 +705,9 @@ async function handleWhatsAppVoice(from, audioBuffer, mimeType) {
 }
 
 async function handleWhatsAppMedia(from, buffer, originalName, caption, mimeType) {
-    if (from.endsWith('@g.us')) return;
+    if (!isAuthorizedWhatsApp(from)) return;
 
     const users = storage.getUsers();
-    if (users.whatsappChatId && users.whatsappChatId !== from) return;
-
     if (!users.whatsappChatId) {
         storage.setWhatsAppUser(from);
     }

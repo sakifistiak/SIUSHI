@@ -10,6 +10,58 @@ let currentQRCodeDataUrl = null;
 let isConnected = false;
 let lastPairingError = null;
 
+// Track message IDs sent by the bot to avoid self-reply loops
+const botSentMessageIds = new Set();
+
+function normalizeJid(jid) {
+    if (!jid) return jid;
+    if (jid.includes(':') && jid.includes('@')) {
+        return jid.split(':')[0] + '@' + jid.split('@')[1];
+    }
+    return jid;
+}
+
+function isSelfChat(msg, socketUser) {
+    if (!msg || !msg.key) return false;
+    const remote = msg.key.remoteJid || '';
+    const cleanRemote = remote.split('@')[0].split(':')[0];
+
+    const envBotNum = (process.env.BOT_PHONE_NUMBER || '').replace(/[^0-9]/g, '');
+    if (envBotNum && cleanRemote === envBotNum) return true;
+
+    if (socketUser) {
+        const userNum = socketUser.id ? socketUser.id.split('@')[0].split(':')[0] : '';
+        const userLid = socketUser.lid ? socketUser.lid.split('@')[0].split(':')[0] : '';
+        if (userNum && cleanRemote === userNum) return true;
+        if (userLid && cleanRemote === userLid) return true;
+        if (remote === socketUser.id || remote === socketUser.lid) return true;
+    }
+
+    return false;
+}
+
+function extractMessageContent(msg) {
+    if (!msg || !msg.message) return { text: '', isAudio: false, isMedia: false, raw: null };
+
+    let m = msg.message;
+    // Unwrap nested message wrappers (ephemeral, view-once, forwarded, edited)
+    if (m.ephemeralMessage?.message) m = m.ephemeralMessage.message;
+    if (m.viewOnceMessage?.message) m = m.viewOnceMessage.message;
+    if (m.viewOnceMessageV2?.message) m = m.viewOnceMessageV2.message;
+    if (m.documentWithCaptionMessage?.message) m = m.documentWithCaptionMessage.message;
+    if (m.editedMessage?.message) m = m.editedMessage.message;
+
+    const isAudio = Boolean(m.audioMessage);
+    const isMedia = Boolean(m.imageMessage || m.documentMessage);
+    const text = m.conversation || 
+                 m.extendedTextMessage?.text || 
+                 m.imageMessage?.caption || 
+                 m.documentMessage?.caption || 
+                 '';
+
+    return { text: text.trim(), isAudio, isMedia, raw: m };
+}
+
 async function requestNewPairingCode(botNumber, onPairingCode) {
     if (!waSocket) {
         lastPairingError = 'Socket not ready yet';
@@ -95,25 +147,41 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
             currentPairingCode = null;
             currentQRCodeDataUrl = null;
             console.log('\n✅ WhatsApp is successfully connected and online!\n');
+            console.log(`📱 Account ID: ${waSocket.user?.id} | LID: ${waSocket.user?.lid || 'N/A'}`);
         }
     });
 
     // Handle incoming messages
     waSocket.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
+        // Accept both external incoming ('notify') and self-appended sync ('append')
+        if (type !== 'notify' && type !== 'append') return;
 
         for (const msg of messages) {
-            if (msg.key.fromMe || msg.key.remoteJid === 'status@broadcast') continue;
+            if (!msg.message) continue;
+            if (msg.key.remoteJid === 'status@broadcast') continue;
+            if (msg.key.remoteJid?.endsWith('@g.us')) continue; // Ignore groups
+
+            // Avoid bot responding to messages it sent
+            if (botSentMessageIds.has(msg.key.id)) continue;
 
             const from = msg.key.remoteJid;
+            const selfChat = isSelfChat(msg, waSocket.user);
+
+            // If message is fromMe, ONLY process if it's a self-chat ("Message yourself")
+            // If fromMe is true and chatting with a contact, ignore it
+            if (msg.key.fromMe && !selfChat) {
+                continue;
+            }
+
+            const { text, isAudio, isMedia, raw } = extractMessageContent(msg);
+            const mediaSource = raw ? { key: msg.key, message: raw } : msg;
 
             // Audio message
-            const isAudio = Boolean(msg.message?.audioMessage);
             if (isAudio && onAudioReceived) {
                 try {
-                    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
-                    const mimeType = msg.message?.audioMessage?.mimetype || 'audio/ogg';
-                    console.log(`🎙️ [WhatsApp Voice] From: ${from} | Mime: ${mimeType}`);
+                    const buffer = await downloadMediaMessage(mediaSource, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+                    const mimeType = raw?.audioMessage?.mimetype || 'audio/ogg';
+                    console.log(`🎙️ [WhatsApp Voice] From: ${from} (self: ${selfChat}) | Mime: ${mimeType}`);
                     await onAudioReceived(from, buffer, mimeType);
                     continue;
                 } catch (e) {
@@ -122,15 +190,14 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
             }
 
             // Image or Document
-            const isMedia = Boolean(msg.message?.imageMessage || msg.message?.documentMessage);
             if (isMedia && onMediaReceived) {
                 try {
-                    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
-                    const caption = msg.message?.imageMessage?.caption || msg.message?.documentMessage?.caption || '';
-                    const originalName = msg.message?.documentMessage?.fileName || (msg.message?.imageMessage ? 'photo.jpg' : 'file.bin');
-                    const mimeType = msg.message?.imageMessage?.mimetype || msg.message?.documentMessage?.mimetype || 'application/octet-stream';
-                    
-                    console.log(`📎 [WhatsApp Media] From: ${from} | File: ${originalName} | Caption: "${caption}"`);
+                    const buffer = await downloadMediaMessage(mediaSource, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+                    const caption = raw?.imageMessage?.caption || raw?.documentMessage?.caption || '';
+                    const originalName = raw?.documentMessage?.fileName || (raw?.imageMessage ? 'photo.jpg' : 'file.bin');
+                    const mimeType = raw?.imageMessage?.mimetype || raw?.documentMessage?.mimetype || 'application/octet-stream';
+
+                    console.log(`📎 [WhatsApp Media] From: ${from} (self: ${selfChat}) | File: ${originalName} | Caption: "${caption}"`);
                     await onMediaReceived(from, buffer, originalName, caption, mimeType);
                     continue;
                 } catch (e) {
@@ -138,13 +205,10 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
                 }
             }
 
-            const text = msg.message?.conversation || 
-                         msg.message?.extendedTextMessage?.text || 
-                         '';
-
+            // Text message
             if (text && onMessageReceived) {
-                console.log(`📩 [WhatsApp Incoming] From: ${from} | Text: "${text}"`);
-                await onMessageReceived(from, text.trim(), msg);
+                console.log(`📩 [WhatsApp Incoming] From: ${from} (self: ${selfChat}) | Text: "${text}"`);
+                await onMessageReceived(from, text, msg);
             }
         }
     });
@@ -157,8 +221,13 @@ async function sendWhatsAppMessage(jid, text) {
         console.error('❌ WhatsApp socket is not initialized');
         return false;
     }
+    const targetJid = normalizeJid(jid);
     try {
-        await waSocket.sendMessage(jid, { text });
+        const sent = await waSocket.sendMessage(targetJid, { text });
+        if (sent?.key?.id) {
+            botSentMessageIds.add(sent.key.id);
+            setTimeout(() => botSentMessageIds.delete(sent.key.id), 5 * 60 * 1000);
+        }
         return true;
     } catch (err) {
         console.error('❌ Error sending WhatsApp message:', err.message);
@@ -168,18 +237,24 @@ async function sendWhatsAppMessage(jid, text) {
 
 async function sendWhatsAppFile(jid, filePath, caption, mimeType) {
     if (!waSocket) return false;
+    const targetJid = normalizeJid(jid);
     try {
         const buffer = fs.readFileSync(filePath);
+        let sent;
         if (mimeType && mimeType.startsWith('image/')) {
-            await waSocket.sendMessage(jid, { image: buffer, caption: caption || '' });
+            sent = await waSocket.sendMessage(targetJid, { image: buffer, caption: caption || '' });
         } else {
             const fileName = path.basename(filePath);
-            await waSocket.sendMessage(jid, { 
+            sent = await waSocket.sendMessage(targetJid, { 
                 document: buffer, 
                 mimetype: mimeType || 'application/octet-stream', 
                 fileName: fileName.replace(/^\d+_/, ''), 
                 caption: caption || '' 
             });
+        }
+        if (sent?.key?.id) {
+            botSentMessageIds.add(sent.key.id);
+            setTimeout(() => botSentMessageIds.delete(sent.key.id), 5 * 60 * 1000);
         }
         return true;
     } catch (err) {
@@ -202,5 +277,6 @@ module.exports = {
     sendWhatsAppMessage,
     sendWhatsAppFile,
     requestNewPairingCode,
-    getWhatsAppStatus
+    getWhatsAppStatus,
+    normalizeJid
 };
