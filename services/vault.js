@@ -31,7 +31,7 @@ function saveFiles(files) {
     fs.writeFileSync(DB_PATH, JSON.stringify({ files }, null, 2));
 }
 
-function saveAttachment({ buffer, originalName, caption, mimeType }) {
+function saveAttachment(userId, { buffer, originalName, caption, mimeType }) {
     initDB();
     const safeName = (originalName || 'file_' + Date.now()).replace(/[^a-zA-Z0-9._-]/g, '_');
     const storedFileName = `${Date.now()}_${safeName}`;
@@ -41,6 +41,7 @@ function saveAttachment({ buffer, originalName, caption, mimeType }) {
 
     const record = {
         id: 'doc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        userId: userId || 'default',
         originalName: originalName || storedFileName,
         storedPath: storedPath,
         caption: (caption || '').trim(),
@@ -54,17 +55,19 @@ function saveAttachment({ buffer, originalName, caption, mimeType }) {
     return record;
 }
 
-function searchAttachment(query) {
+function searchAttachment(userId, query) {
     const list = getFiles();
     if (!query || list.length === 0) return null;
 
+    const userFiles = list.filter(f => !userId || f.userId === userId || (!f.userId && userId === 'default'));
+    if (userFiles.length === 0) return null;
+
     const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 1);
     
-    // Score based matching
     let bestMatch = null;
     let highestScore = 0;
 
-    for (const file of list) {
+    for (const file of userFiles) {
         const text = `${file.originalName} ${file.caption}`.toLowerCase();
         let score = 0;
         for (const term of terms) {
@@ -84,15 +87,16 @@ function searchAttachment(query) {
     return null;
 }
 
-function listVaultFiles() {
+function listVaultFiles(userId) {
     const list = getFiles();
-    if (list.length === 0) {
+    const userFiles = list.filter(f => !userId || f.userId === userId || (!f.userId && userId === 'default'));
+    if (userFiles.length === 0) {
         return `📂 আপনার ভল্টে বর্তমানে কোনো ফাইল বা ডকুমেন্ট সংরক্ষিত নেই।`;
     }
 
     let msg = `📂 *আপনার ভল্টে সংরক্ষিত ডকুমেন্টসমূহ:*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    list.forEach((f, idx) => {
+    userFiles.forEach((f, idx) => {
         msg += `${idx + 1}. 📄 *${f.caption || f.originalName}*\n`;
         msg += `   📎 নাম: \`${f.originalName}\`\n\n`;
     });

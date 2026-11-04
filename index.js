@@ -7,6 +7,7 @@ const fs = require('fs');
 const { parseReminder, isGreeting } = require('./parser');
 const { classifyIntent } = require('./ai/router');
 const storage = require('./storage');
+const usersService = require('./services/users');
 const finance = require('./services/finance');
 const clients = require('./services/clients');
 const urgent = require('./services/urgent');
@@ -43,37 +44,16 @@ http.createServer(async (req, res) => {
         return res.end();
     }
 
-    if (pathname === '/add-number') {
-        const phone = parsedUrl.searchParams.get('phone');
-        if (phone) {
-            storage.addAuthorizedNumber(phone);
-        }
-        res.writeHead(302, { Location: '/' });
-        return res.end();
-    }
-
-    if (pathname === '/remove-number') {
-        const phone = parsedUrl.searchParams.get('phone');
-        if (phone) {
-            storage.removeAuthorizedNumber(phone);
-        }
-        res.writeHead(302, { Location: '/' });
-        return res.end();
-    }
-
     if (pathname === '/json') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({
             ...getWhatsAppStatus(),
-            authorizedNumbers: storage.getAuthorizedNumbers()
+            totalUsers: usersService.getAllUsers().length
         }));
     }
 
     const { isConnected, currentPairingCode, currentQRCodeDataUrl, lastPairingError } = getWhatsAppStatus();
-    const users = storage.getUsers();
-    const primaryDisplay = users.whatsappChatId ? users.whatsappChatId.split('@')[0] : (process.env.BOT_PHONE_NUMBER || '01576932471');
-    const allAuth = storage.getAuthorizedNumbers();
-    const secondaryNumbers = allAuth.filter(n => n !== primaryDisplay && n !== storage.normalizePhoneNumber(primaryDisplay));
+    const allRegisteredUsers = usersService.getAllUsers();
 
     const html = `<!DOCTYPE html>
 <html lang="bn">
@@ -83,7 +63,7 @@ http.createServer(async (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; text-align: center; margin: 0; }
-        .card { background: #1e293b; max-width: 500px; margin: 30px auto; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #334155; }
+        .card { background: #1e293b; max-width: 520px; margin: 30px auto; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #334155; }
         h1 { margin-top: 0; font-size: 26px; color: #38bdf8; }
         .status-row { display: flex; justify-content: space-between; align-items: center; margin: 12px 0; padding: 12px 18px; background: #0f172a; border-radius: 12px; font-weight: 500; font-size: 14px; }
         .badge { padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 600; }
@@ -94,20 +74,14 @@ http.createServer(async (req, res) => {
         .btn { display: inline-block; background: #38bdf8; color: #0f172a; font-weight: 700; text-decoration: none; padding: 12px 24px; border-radius: 10px; margin-top: 15px; transition: 0.2s; }
         .btn:hover { background: #7dd3fc; }
         .error { color: #f87171; font-size: 13px; margin-top: 10px; }
-        .numbers-box { margin-top: 25px; text-align: left; background: #0f172a; padding: 20px; border-radius: 14px; border: 1px solid #334155; }
-        .number-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #1e293b; font-size: 14px; }
-        .del-btn { color: #f87171; text-decoration: none; font-size: 12px; font-weight: 600; padding: 3px 8px; background: rgba(239, 68, 68, 0.15); border-radius: 6px; }
-        .del-btn:hover { background: rgba(239, 68, 68, 0.3); }
-        .add-form { display: flex; gap: 8px; margin-top: 15px; }
-        .input-phone { flex: 1; padding: 10px 14px; border-radius: 8px; border: 1px solid #334155; background: #1e293b; color: #f8fafc; font-size: 14px; outline: none; }
-        .input-phone:focus { border-color: #38bdf8; }
-        .submit-btn { background: #38bdf8; color: #0f172a; border: none; border-radius: 8px; padding: 10px 16px; font-weight: 700; cursor: pointer; font-size: 14px; }
+        .users-box { margin-top: 25px; text-align: left; background: #0f172a; padding: 20px; border-radius: 14px; border: 1px solid #334155; }
+        .user-item { display: flex; justify-content: space-between; align-items: center; padding: 9px 0; border-bottom: 1px solid #1e293b; font-size: 13px; }
     </style>
 </head>
 <body>
     <div class="card">
         <h1>🤖 SIUSHO Assistant</h1>
-        <p style="color: #94a3b8; font-size: 14px; margin-bottom: 25px;">Personal AI Executive Dashboard & Access Control</p>
+        <p style="color: #94a3b8; font-size: 14px; margin-bottom: 25px;">Multi-User Cloud AI Assistant & WhatsApp Host</p>
 
         <div class="status-row">
             <span>Telegram Bot</span>
@@ -115,10 +89,15 @@ http.createServer(async (req, res) => {
         </div>
 
         <div class="status-row">
-            <span>WhatsApp Bot</span>
+            <span>WhatsApp Bot Host</span>
             <span class="badge ${isConnected ? 'badge-green' : 'badge-yellow'}">
                 ${isConnected ? 'Online & Linked ✅' : 'Waiting for Pairing ⏳'}
             </span>
+        </div>
+
+        <div class="status-row">
+            <span>সক্রিয় ব্যবহারকারী (Active Users)</span>
+            <span class="badge badge-green">${allRegisteredUsers.length} জন</span>
         </div>
 
         ${!isConnected ? `
@@ -138,47 +117,39 @@ http.createServer(async (req, res) => {
             ${lastPairingError ? `<div class="error">⚠️ ${lastPairingError}</div>` : ''}
 
             <div class="instruction">
-                📱 <b>কীভাবে লিঙ্ক করবেন:</b><br>
+                📱 <b>হোস্ট ডিভাইস লিঙ্ক করার নিয়ম:</b><br>
                 1. আপনার মোবাইলের <b>WhatsApp</b> খুলুন।<br>
                 2. <b>Linked Devices &gt; Link a Device</b>-এ যান।<br>
-                3. ক্যামেরা দিয়ে উপরের <b>QR কোডটি স্ক্যান করুন</b> (অথবা নিচে "Link with phone number instead"-এ কোডটি দিন)!
+                3. ক্যামেরা দিয়ে উপরের <b>QR কোডটি স্ক্যান করুন</b>!
             </div>
         ` : `
             <div style="margin-top: 20px; padding: 16px; background: #064e3b; border-radius: 14px; color: #6ee7b7; font-size: 14px;">
-                🎉 <b>WhatsApp সফলভাবে কানেক্টেড!</b> আপনার সহকারী এখন লাইভ রয়েছে।
+                🎉 <b>WhatsApp Host অনলাইন!</b> মাল্টি-ইউজার অ্যাসিস্ট্যান্ট সম্পূর্ণ প্রস্তুত।
             </div>
         `}
 
-        <!-- Dynamic Secondary Numbers Control Section -->
-        <div class="numbers-box">
-            <h3 style="margin: 0 0 8px 0; font-size: 16px; color: #38bdf8; display: flex; justify-content: space-between; align-items: center;">
-                <span>📱 অনুমোদিত নম্বরসমূহ (Access Control)</span>
+        <div class="users-box">
+            <h3 style="margin: 0 0 8px 0; font-size: 15px; color: #38bdf8;">
+                👥 নিবন্ধিত ব্যবহারকারী তালিকা (${allRegisteredUsers.length} জন)
             </h3>
-            <p style="font-size: 12px; color: #94a3b8; margin: 0 0 14px 0;">যেসব নম্বর যোগ করবেন তারা সবাই WhatsApp-এ বটের সকল সুযোগ-সুবিধা ও স্বয়ংক্রিয় অ্যালার্ট পাবে।</p>
+            <p style="font-size: 12px; color: #94a3b8; margin: 0 0 12px 0;">প্রত্যেক ব্যবহারকারীর আয়-ব্যয়, দেনা-পাওনা ও রিমাইন্ডার সম্পূর্ণ আলাদা ও সুরক্ষিত।</p>
 
-            <div class="number-item" style="color: #cbd5e1;">
-                <span>👑 <b>মূল অ্যাকাউন্ট:</b> <code>${primaryDisplay}</code></span>
-                <span style="font-size: 11px; color: #34d399; font-weight: bold;">PRIMARY</span>
-            </div>
-
-            ${secondaryNumbers.map(n => `
-                <div class="number-item">
-                    <span>👤 <code>${n}</code></span>
-                    <a href="/remove-number?phone=${n}" onclick="return confirm('মুছে ফেলতে চান?');" class="del-btn">মুছুন 🗑️</a>
+            ${allRegisteredUsers.map((u, i) => `
+                <div class="user-item">
+                    <span><b>${i + 1}. ${u.name}</b></span>
+                    <span style="color: #94a3b8; font-size: 12px;">
+                        ${u.whatsappJid ? '📱 WhatsApp' : ''}
+                        ${u.whatsappJid && u.telegramChatId ? ' | ' : ''}
+                        ${u.telegramChatId ? '🤖 Telegram' : ''}
+                    </span>
                 </div>
             `).join('')}
 
-            ${secondaryNumbers.length === 0 ? '<p style="color: #64748b; font-size: 13px; margin: 12px 0 6px 0;">কোনো সেকেন্ডারি নম্বর যোগ করা নেই। নিচে নম্বর দিন:</p>' : ''}
-
-            <form action="/add-number" method="GET" class="add-form">
-                <input type="text" name="phone" placeholder="যেমন: 017xxxxxxxx" class="input-phone" required>
-                <button type="submit" class="submit-btn">+ যোগ করুন</button>
-            </form>
+            ${allRegisteredUsers.length === 0 ? '<p style="color: #64748b; font-size: 13px; margin: 10px 0;">এখনো কোনো ইউজার মেসেজ দেয়নি। WhatsApp বা Telegram-এ মেসেজ দিলে অটো-রেজিস্টার হবে।</p>' : ''}
         </div>
     </div>
 
     <script>
-        // Auto-refresh when connection status updates
         setInterval(async () => {
             try {
                 const res = await fetch('/json');
@@ -235,82 +206,70 @@ const MAIN_MENU_KEYBOARD = {
             ],
             [
                 { text: '📂 ভল্টের ফাইলসমূহ', callback_data: 'btn_vault' },
-                { text: '📱 অনুমোদিত নম্বর', callback_data: 'btn_auth_numbers' }
+                { text: '🔗 সিঙ্ক কোড (/link)', callback_data: 'btn_link' }
             ],
             [
-                { text: '🗑️ শেষ খরচ মুছো', callback_data: 'btn_fin_delete' }
+                { text: '🗑️ শেষ খরচ মুছো', callback_data: 'btn_fin_delete' },
+                { text: '👤 আমার প্রোফাইল', callback_data: 'btn_profile' }
             ]
         ]
     }
 };
 
-// 2. Cross-Platform Dispatchers
-async function sendDualNotification(messageText, options = {}) {
-    const users = storage.getUsers();
-    let sentTelegram = false;
-    let sentWhatsApp = 0;
+// 2. Multi-User Notification Dispatchers
+async function sendUserNotification(userId, messageText, options = {}) {
+    const user = usersService.getUserById(userId);
+    if (!user) {
+        console.warn('⚠️ sendUserNotification: User not found for id:', userId);
+        return;
+    }
 
-    if (users.telegramChatId) {
+    let sentTelegram = false;
+    let sentWhatsApp = false;
+
+    if (user.telegramChatId) {
         try {
-            await telegramBot.sendMessage(users.telegramChatId, messageText, { parse_mode: 'Markdown', ...options });
+            await telegramBot.sendMessage(user.telegramChatId, messageText, { parse_mode: 'Markdown', ...options });
             sentTelegram = true;
         } catch (err) {
-            console.error('Failed to send Telegram notification:', err.message);
+            console.error(`Failed to send Telegram notification to user ${userId}:`, err.message);
         }
     }
 
-    const primaryWa = users.whatsappChatId || (process.env.BOT_PHONE_NUMBER ? `${process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '')}@s.whatsapp.net` : null);
-
-    const targetSet = new Set();
-    if (primaryWa) targetSet.add(primaryWa);
-
-    // Broadcast to all authorized numbers (primary + secondary)
-    const authorizedList = storage.getAuthorizedNumbers();
-    for (const num of authorizedList) {
-        targetSet.add(`${num}@s.whatsapp.net`);
-    }
-
-    for (const target of targetSet) {
+    const waTarget = user.whatsappJid || user.whatsappLid;
+    if (waTarget) {
         try {
-            const ok = await sendWhatsAppMessage(target, messageText);
-            if (ok) sentWhatsApp++;
+            sentWhatsApp = await sendWhatsAppMessage(waTarget, messageText);
         } catch (err) {
-            console.error(`Failed to send WhatsApp notification to ${target}:`, err.message);
+            console.error(`Failed to send WhatsApp notification to user ${userId}:`, err.message);
         }
     }
 
-    console.log(`[Notification Triggered] Telegram: ${sentTelegram}, WhatsApp recipients: ${sentWhatsApp}`);
+    console.log(`[User Notification] User: ${user.name} (${userId}) | Telegram: ${sentTelegram}, WhatsApp: ${sentWhatsApp}`);
 }
 
-async function sendDualFile(filePath, caption, mimeType) {
-    const users = storage.getUsers();
+async function sendUserFile(userId, filePath, caption, mimeType) {
+    const user = usersService.getUserById(userId);
+    if (!user) return;
 
-    if (users.telegramChatId) {
+    if (user.telegramChatId) {
         try {
             if (mimeType && mimeType.startsWith('image/')) {
-                await telegramBot.sendPhoto(users.telegramChatId, filePath, { caption: caption || '' });
+                await telegramBot.sendPhoto(user.telegramChatId, filePath, { caption: caption || '' });
             } else {
-                await telegramBot.sendDocument(users.telegramChatId, filePath, { caption: caption || '' });
+                await telegramBot.sendDocument(user.telegramChatId, filePath, { caption: caption || '' });
             }
         } catch (err) {
             console.error('Failed to send Telegram file:', err.message);
         }
     }
 
-    const primaryWa = users.whatsappChatId || (process.env.BOT_PHONE_NUMBER ? `${process.env.BOT_PHONE_NUMBER.replace(/[^0-9]/g, '')}@s.whatsapp.net` : null);
-    const targetSet = new Set();
-    if (primaryWa) targetSet.add(primaryWa);
-
-    const authorizedList = storage.getAuthorizedNumbers();
-    for (const num of authorizedList) {
-        targetSet.add(`${num}@s.whatsapp.net`);
-    }
-
-    for (const target of targetSet) {
+    const waTarget = user.whatsappJid || user.whatsappLid;
+    if (waTarget) {
         try {
-            await sendWhatsAppFile(target, filePath, caption, mimeType);
+            await sendWhatsAppFile(waTarget, filePath, caption, mimeType);
         } catch (err) {
-            console.error(`Failed to send WhatsApp file to ${target}:`, err.message);
+            console.error('Failed to send WhatsApp file:', err.message);
         }
     }
 }
@@ -335,7 +294,7 @@ function scheduleJob(reminder) {
                 ]
             }
         };
-        await sendDualNotification(text, keyboard);
+        await sendUserNotification(reminder.userId, text, keyboard);
         storage.markReminderDone(reminder.id);
     });
 }
@@ -348,194 +307,213 @@ function restoreReminders() {
     });
 }
 
-// In-memory conversation history for context awareness
-const conversationHistory = [];
-function recordHistory(role, text) {
-    conversationHistory.push({ role, text });
-    if (conversationHistory.length > 8) {
-        conversationHistory.shift();
+// In-memory conversation history isolated per user
+const userHistories = {};
+function recordHistory(userId, role, text) {
+    if (!userHistories[userId]) userHistories[userId] = [];
+    userHistories[userId].push({ role, text });
+    if (userHistories[userId].length > 8) {
+        userHistories[userId].shift();
     }
 }
+function getUserHistory(userId) {
+    return userHistories[userId] || [];
+}
 
-// 4. Central Intent Orchestrator
-async function processUserCommand(text, platform, userChatId) {
+// 4. Central Multi-User Intent Orchestrator
+async function processUserCommand(text, platform, userChatId, userId) {
     const cleanText = text.trim();
-    recordHistory('user', cleanText);
+    recordHistory(userId, 'user', cleanText);
+    const user = usersService.getUserById(userId);
 
     // Direct greeting check
     if (isGreeting(cleanText)) {
-        const reply = "হ্যাঁ ভাই, আমি আছি! 🫡\nনিচের বাটনগুলো দিয়েও কাজ করতে পারেন, অথবা যেভাবেই ইচ্ছা মুখে বা লিখে বলুন!";
-        recordHistory('bot', reply);
+        const reply = `হ্যাঁ ${user?.name || 'ভাই'}, আমি আছি! 🫡\nনিচের বাটনগুলো দিয়েও কাজ করতে পারেন, অথবা যেভাবেই ইচ্ছা মুখে বা লিখে বলুন!`;
+        recordHistory(userId, 'bot', reply);
         if (platform === 'telegram') {
             await telegramBot.sendMessage(userChatId, reply, MAIN_MENU_KEYBOARD);
             return null;
         }
-        return reply + "\n\n• 💸 খরচের হিসাব\n• 📊 দৈনিক রিপোর্ট ('আজকের হিসাব')\n• 🤝 দেনা-পাওনা খাতা\n• 👤 ক্লায়েন্ট ডেডলাইন\n• 🚨 পরীক্ষা/ভাইভা নাছোড়বান্দা অ্যালার্ম\n• 📱 অনুমোদিত নম্বরসমূহ ('নম্বর লিস্ট')\n• 🎙️ ভয়েস মেসেজ দিয়েও কথা বলতে পারেন!";
+        return reply + "\n\n• 💸 খরচের হিসাব\n• 📊 দৈনিক রিপোর্ট ('আজকের হিসাব')\n• 🤝 দেনা-পাওনা খাতা\n• 👤 ক্লায়েন্ট ডেডলাইন\n• 🚨 পরীক্ষা/ভাইভা নাছোড়বান্দা অ্যালার্ম\n• 🔗 অন্য ডিভাইস সিঙ্ক করতে: /link\n• 🎙️ ভয়েস মেসেজ দিয়েও কথা বলতে পারেন!";
     }
 
-    // Direct command for authorized numbers
-    if (cleanText.startsWith('/addnumber') || cleanText.startsWith('/add_number') || cleanText.match(/^(?:নম্বর|নাম্বার)\s+(?:যোগ|এড|অ্যাড)\s+ক?রো?\s+([0-9+]+)/i)) {
-        const match = cleanText.match(/([0-9+]{8,15})/);
-        if (match) {
-            const added = storage.addAuthorizedNumber(match[1]);
-            const reply = added 
-                ? `✅ *নতুন নম্বর অনুমোদিত হয়েছে!*\n\n📱 নম্বর: \`${added}\`\nএখন থেকে এই নম্বর থেকেও WhatsApp-এ বটের সকল সুবিধা ব্যবহার করা যাবে এবং অ্যালার্ট পাওয়া যাবে। 👍`
-                : `❌ নম্বর ফরম্যাট সঠিক নয়। সঠিক মোবাইল নম্বর দিন (যেমন: 017xxxxxxxx)।`;
-            recordHistory('bot', reply);
-            return reply;
+    // Direct account linking commands
+    if (cleanText === '/link' || cleanText === 'লিঙ্ক' || cleanText === 'সিঙ্ক' || cleanText === 'sync') {
+        const code = usersService.generateLinkCode(userId);
+        const instructions = platform === 'telegram'
+            ? `🔗 *আপনার অ্যাকাউন্ট সিঙ্ক কোড:* 👉 \`${code}\` 👈\n\n` +
+              `📱 *কীভাবে WhatsApp লিঙ্ক করবেন:*\n` +
+              `আপনার WhatsApp থেকে এই বটকে লিখুন:\n` +
+              `\`/link ${code}\`\n\n` +
+              `⏱️ এই কোডটির মেয়াদ ১৫ মিনিট। লিঙ্ক করার সাথে সাথে আপনার WhatsApp ও Telegram-এর সমস্ত ডেটা ও রিমাইন্ডার এক হয়ে যাবে!`
+            : `🔗 *আপনার অ্যাকাউন্ট সিঙ্ক কোড:* 👉 \`${code}\` 👈\n\n` +
+              `🤖 *কীভাবে Telegram লিঙ্ক করবেন:*\n` +
+              `আপনার Telegram থেকে বটকে (@siusho_bot) লিখুন:\n` +
+              `\`/link ${code}\`\n\n` +
+              `⏱️ এই কোডটির মেয়াদ ১৫ মিনিট। লিঙ্ক করার সাথে সাথে উভয় প্ল্যাটফর্মের ডেটা এক হয়ে যাবে!`;
+        recordHistory(userId, 'bot', instructions);
+        return instructions;
+    }
+
+    if (cleanText.startsWith('/link ') || cleanText.startsWith('/link:') || cleanText.match(/^সিঙ্ক\s+([0-9]{6})/i)) {
+        const parts = cleanText.split(/[\s:]+/);
+        const code = parts[1];
+        const res = usersService.linkAccountWithCode(code, platform, userChatId);
+        let reply = '';
+        if (res.success) {
+            reply = `🎉 *অভিনন্দন! আপনার অ্যাকাউন্ট সফলভাবে লিঙ্ক হয়েছে!*\n\n` +
+                    `এখন থেকে আপনি Telegram এবং WhatsApp—উভয় মাধ্যম থেকেই আপনার সমস্ত খরচ, দেনা-পাওনা, প্রজেক্ট এবং রিমাইন্ডার একসাথে পরিচালনা করতে পারবেন! 🚀`;
+        } else {
+            reply = `❌ ${res.message}`;
         }
-    }
-
-    if (cleanText.startsWith('/removenumber') || cleanText.startsWith('/remove_number') || cleanText.match(/^(?:নম্বর|নাম্বার)\s+(?:মুছে|বাদ|ডিলিট)\s+(?:দাও|ফেলো|করো)\s+([0-9+]+)/i)) {
-        const match = cleanText.match(/([0-9+]{8,15})/);
-        if (match) {
-            const removed = storage.removeAuthorizedNumber(match[1]);
-            const reply = removed
-                ? `🗑️ *নম্বরটি সফলভাবে মুছে ফেলা হয়েছে!* (${match[1]})`
-                : `❓ নম্বরটি অনুমোদিত লিস্টে পাওয়া যায়নি।`;
-            recordHistory('bot', reply);
-            return reply;
-        }
-    }
-
-    if (cleanText === '/numbers' || cleanText === '/auth_numbers' || cleanText === 'নম্বর লিস্ট' || cleanText === 'অনুমোদিত নম্বর') {
-        const reply = storage.formatAuthorizedNumbersList();
-        recordHistory('bot', reply);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
-    // AI Intent Classification with Conversation Context
-    const classified = await classifyIntent(cleanText, conversationHistory);
+    if (cleanText === '/profile' || cleanText === 'আমার প্রোফাইল' || cleanText === 'আমার তথ্য') {
+        let reply = `👤 *আপনার প্রোফাইল তথ্য:*\n━━━━━━━━━━━━━━━━━━━━━\n`;
+        reply += `🆔 *ইউজার আইডি:* \`${user?.id}\`\n`;
+        reply += `📛 *নাম:* ${user?.name}\n`;
+        reply += `📱 *WhatsApp:* ${user?.whatsappPhone ? user.whatsappPhone : (user?.whatsappJid ? 'সংযুক্ত ✅' : 'সংযুক্ত নয় ❌')}\n`;
+        reply += `🤖 *Telegram:* ${user?.telegramChatId ? `সংযুক্ত ✅ (ID: ${user.telegramChatId})` : 'সংযুক্ত নয় ❌'}\n\n`;
+        reply += `💡 অন্য ডিভাইস লিঙ্ক করতে লিখুন: \`/link\``;
+        recordHistory(userId, 'bot', reply);
+        return reply;
+    }
+
+    // AI Intent Classification with User-Specific Context
+    const history = getUserHistory(userId);
+    const classified = await classifyIntent(cleanText, history);
     const { intent, data } = classified;
-    console.log(`🧠 [AI Intent] ${intent} | Data:`, JSON.stringify(data));
+    console.log(`🧠 [AI Intent - User: ${user?.name}] ${intent} | Data:`, JSON.stringify(data));
 
     // Handle FINANCE_UPDATE_LAST
     if (intent === 'FINANCE_UPDATE_LAST' || (intent === 'FINANCE_ADD' && (!data.amount || data.amount <= 0))) {
-        const updated = finance.updateLastTransaction(data);
+        const updated = finance.updateLastTransaction(userId, data);
         if (updated) {
             const reply = `✏️ *আগের এন্ট্রি আপডেট করা হয়েছে!*\n\n💵 *পরিমাণ:* ${updated.amount.toLocaleString('en-US')} ৳\n📁 *খাত:* ${updated.category}\n📝 *নোট:* ${updated.note || 'কোনো নোট নেই'}`;
-            recordHistory('bot', reply);
+            recordHistory(userId, 'bot', reply);
             return reply;
         } else {
             const reply = `❓ আপডেট করার মতো আগের কোনো খরচের রেকর্ড পাওয়া যায়নি।`;
-            recordHistory('bot', reply);
+            recordHistory(userId, 'bot', reply);
             return reply;
         }
     }
 
     // Handle FINANCE_DELETE_LAST
     if (intent === 'FINANCE_DELETE_LAST') {
-        const deleted = finance.deleteLastTransaction();
+        const deleted = finance.deleteLastTransaction(userId);
         if (deleted) {
             const reply = `🗑️ *আগের ভুল এন্ট্রি সফলভাবে মুছে ফেলা হয়েছে!*\n\n❌ *মোছা এন্ট্রি:* ${deleted.category} (${deleted.amount} ৳) - ${deleted.note || ''}`;
-            recordHistory('bot', reply);
+            recordHistory(userId, 'bot', reply);
             return reply;
         } else {
             const reply = `❓ মুছে ফেলার মতো কোনো সাম্প্রতিক এন্ট্রি নেই।`;
-            recordHistory('bot', reply);
+            recordHistory(userId, 'bot', reply);
             return reply;
         }
     }
 
     // Handle FINANCE_ADD
     if (intent === 'FINANCE_ADD') {
-        const item = finance.addTransaction(data);
+        const item = finance.addTransaction(userId, data);
         const icon = item.type === 'income' ? '🟢 আয়' : '🔴 ব্যয়';
         const reply = `✅ *${icon} সফলভাবে যোগ হয়েছে!*\n\n💵 *পরিমাণ:* ${item.amount.toLocaleString('en-US')} ৳\n📁 *খাত:* ${item.category}\n📝 *নোট:* ${item.note || 'কোনো নোট নেই'}\n📅 *তারিখ:* ${item.date}`;
-        recordHistory('bot', reply);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle FINANCE_REPORT
     if (intent === 'FINANCE_REPORT') {
-        const reply = (data.period === 'month') ? finance.formatMonthlyReport() : finance.formatDailyReport();
-        recordHistory('bot', reply);
+        const reply = (data.period === 'month') ? finance.formatMonthlyReport(userId) : finance.formatDailyReport(userId);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle DUE_ADD (দেনা-পাওনা যোগ)
     if (intent === 'DUE_ADD') {
-        const d = dues.addDue(data);
+        const d = dues.addDue(userId, data);
         const typeText = d.type === 'receivable' ? '🟢 পাওনা (আপনি পাবেন)' : '🔴 দেনা (আপনাকে দিতে হবে)';
         const reply = `🤝 *দেনা-পাওনা এন্ট্রি সেভ হয়েছে!*\n\n${typeText}\n👤 *ব্যক্তি:* ${d.personName}\n💵 *টাকা:* ${d.amount.toLocaleString('en-US')} ৳\n📝 *নোট:* ${d.note || 'কোনো নোট নেই'}`;
-        recordHistory('bot', reply);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle DUE_LIST
     if (intent === 'DUE_LIST') {
-        const reply = dues.formatDuesList();
-        recordHistory('bot', reply);
+        const reply = dues.formatDuesList(userId);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle DUE_SETTLE
     if (intent === 'DUE_SETTLE') {
-        const settled = dues.settleDue(data.personName);
+        const settled = dues.settleDue(userId, data.personName);
         if (settled) {
             const reply = `✅ *পরিশোধ সম্পন্ন!*\n👤 ${settled.personName}-এর ${settled.amount.toLocaleString('en-US')} টাকার বকেয়া সফলভাবে পরিশোধ হিসেবে চিহ্নিত করা হলো! 👍`;
-            recordHistory('bot', reply);
+            recordHistory(userId, 'bot', reply);
             return reply;
         } else {
             const reply = `❓ "${data.personName || 'ব্যক্তি'}"-এর কোনো পেন্ডিং দেনা বা পাওনা পাওয়া যায়নি। 'দেনা পাওনা লিস্ট' লিখে চেক করুন।`;
-            recordHistory('bot', reply);
+            recordHistory(userId, 'bot', reply);
             return reply;
         }
     }
 
     // Handle CLIENT_ADD
     if (intent === 'CLIENT_ADD') {
-        const p = clients.addProject(data);
+        const p = clients.addProject(userId, data);
         const reply = `✅ *ক্লায়েন্ট প্রজেক্ট যুক্ত হয়েছে!*\n\n👤 *ক্লায়েন্ট:* ${p.clientName}\n📝 *কাজ:* ${p.projectTask}\n⏰ *ডেলিভারি ডেডলাইন:* ${p.deadlineReadable}\n\n💡 ডেডলাইনের আগে আমি আপনাকে স্বয়ংক্রিয়ভাবে অ্যালার্ট দেব!`;
-        recordHistory('bot', reply);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle CLIENT_LIST
     if (intent === 'CLIENT_LIST') {
-        const reply = clients.formatClientList();
-        recordHistory('bot', reply);
+        const reply = clients.formatClientList(userId);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle CLIENT_DONE
     if (intent === 'CLIENT_DONE') {
-        const p = clients.markProjectDone(data.clientName);
+        const p = clients.markProjectDone(userId, data.clientName);
         let reply = '';
         if (p) {
             reply = `🎉 *সাবাশ! কাজ কমপ্লিট!*\n👤 ক্লায়েন্ট: ${p.clientName}\n📝 কাজ: ${p.projectTask}\nপ্রজেক্টটি সফলভাবে সম্পন্ন হিসেবে চিহ্নিত করা হলো! 👍`;
         } else {
             reply = `❓ "${data.clientName || 'ক্লায়েন্ট'}"-এর কোনো পেন্ডিং কাজ খুঁজে পাওয়া যায়নি। 'ক্লায়েন্ট লিস্ট' লিখে চেক করুন।`;
         }
-        recordHistory('bot', reply);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle URGENT_ADD
     if (intent === 'URGENT_ADD') {
-        const u = urgent.addUrgentTask(data);
+        const u = urgent.addUrgentTask(userId, data);
         const firstTime = new Date(u.firstAlertISO).toLocaleString('en-US', { timeZone: 'Asia/Dhaka', hour12: true });
         const reply = `🚨 *নাছোড়বান্দা রিমাইন্ডার সেট করা হয়েছে!*\n\n📝 *বিষয়:* ${u.title}\n⏰ *প্রথম অ্যালার্ম:* ${firstTime}\n🔁 *ব্যবধান:* প্রতি ${u.repeatIntervalMins} মিনিট পর পর\n\n⚠️ *মনে রাখবেন:* নির্দিষ্ট সময় হলে এটি বারবার বাজতে থাকবে যতক্ষণ না আপনি চ্যাটে *"Done"* বা *"কাজ শেষ"* লিখবেন!`;
-        recordHistory('bot', reply);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle URGENT_CONFIRM
     if (intent === 'URGENT_CONFIRM') {
-        const confirmed = urgent.confirmUrgentTask(data.keyword);
+        const confirmed = urgent.confirmUrgentTask(userId, data.keyword);
         let reply = '';
         if (confirmed) {
             reply = `✅ *অভিনন্দন!* আপনি *"${confirmed.title}"* সম্পন্ন করেছেন।\nনাছোড়বান্দা অ্যালার্ম সফলভাবে বন্ধ করা হলো! 🎯`;
         } else {
             reply = `ℹ️ বর্তমানে কোনো সক্রিয় নাছোড়বান্দা অ্যালার্ম চালু নেই।`;
         }
-        recordHistory('bot', reply);
+        recordHistory(userId, 'bot', reply);
         return reply;
     }
 
     // Handle VAULT_SEARCH
     if (intent === 'VAULT_SEARCH') {
-        const match = vault.searchAttachment(data.query);
+        const match = vault.searchAttachment(userId, data.query);
         if (match) {
             if (platform === 'telegram') {
                 if (match.mimeType.startsWith('image/')) {
@@ -547,57 +525,20 @@ async function processUserCommand(text, platform, userChatId) {
                 sendWhatsAppFile(userChatId, match.storedPath, `📄 ${match.caption || match.originalName}`, match.mimeType);
             }
             const reply = `✅ ফাইলটি খুঁজে পেয়েছি! পাঠিয়ে দেওয়া হচ্ছে...`;
-            recordHistory('bot', reply);
+            recordHistory(userId, 'bot', reply);
             return reply;
         } else {
             const reply = `❌ "${data.query}" সম্পর্কিত কোনো ফাইল ভল্টে পাওয়া যায়নি।\nভল্টের সব ফাইল দেখতে লিখুন: *"ভল্ট লিস্ট"*`;
-            recordHistory('bot', reply);
+            recordHistory(userId, 'bot', reply);
             return reply;
         }
     }
 
     // Handle VAULT_LIST
     if (intent === 'VAULT_LIST') {
-        const reply = vault.listVaultFiles();
-        recordHistory('bot', reply);
+        const reply = vault.listVaultFiles(userId);
+        recordHistory(userId, 'bot', reply);
         return reply;
-    }
-
-    // Handle AUTH_NUMBER_ADD
-    if (intent === 'AUTH_NUMBER_ADD') {
-        const phone = data.phone || cleanText;
-        const added = storage.addAuthorizedNumber(phone);
-        if (added) {
-            const reply = `✅ *সেকেন্ডারি নম্বর যুক্ত হয়েছে!*\n\n📱 নম্বর: \`${added}\`\nএখন থেকে এই নম্বর থেকেও WhatsApp-এ বটের সাথে কথা বলা ও রিপোর্ট পাওয়া যাবে! 👍`;
-            recordHistory('bot', reply);
-            return reply;
-        } else {
-            const reply = `❌ নম্বরের ফরম্যাটটি বুঝতে পারিনি। অনুগ্রহ করে সঠিক মোবাইল নম্বর লিখুন (যেমন: \`017xxxxxxxx\`)।`;
-            recordHistory('bot', reply);
-            return reply;
-        }
-    }
-
-    // Handle AUTH_NUMBER_LIST
-    if (intent === 'AUTH_NUMBER_LIST') {
-        const reply = storage.formatAuthorizedNumbersList();
-        recordHistory('bot', reply);
-        return reply;
-    }
-
-    // Handle AUTH_NUMBER_REMOVE
-    if (intent === 'AUTH_NUMBER_REMOVE') {
-        const phone = data.phone || cleanText;
-        const removed = storage.removeAuthorizedNumber(phone);
-        if (removed) {
-            const reply = `🗑️ *নম্বরটি সফলভাবে মুছে ফেলা হয়েছে!*`;
-            recordHistory('bot', reply);
-            return reply;
-        } else {
-            const reply = `❓ নম্বরটি তালিকায় পাওয়া যায়নি। 'অনুমোদিত নম্বর' লিখে লিস্ট চেক করুন।`;
-            recordHistory('bot', reply);
-            return reply;
-        }
     }
 
     // Fallback: Standard or Multi-shot Timer Reminder
@@ -611,6 +552,7 @@ async function processUserCommand(text, platform, userChatId) {
             const itemDate = new Date(firstDate.getTime() + (i * intervalSec * 1000));
             const reminder = {
                 id: 'rem_' + Date.now() + '_' + i + '_' + Math.random().toString(36).substr(2, 4),
+                userId: userId,
                 taskText: count > 1 ? `${parsed.taskText} (#${i + 1}/${count})` : parsed.taskText,
                 targetDate: itemDate.toISOString(),
                 humanReadableTime: itemDate.toLocaleString('en-US', { timeZone: 'Asia/Dhaka', hour12: true }),
@@ -622,8 +564,9 @@ async function processUserCommand(text, platform, userChatId) {
             scheduleJob(reminder);
         }
 
-        const users = storage.getUsers();
-        const deliveryText = (users.telegramChatId && users.whatsappChatId) ? 'WhatsApp & Telegram 📲' : 'Active Channel';
+        const deliveryText = (user?.telegramChatId && (user?.whatsappJid || user?.whatsappLid))
+            ? 'WhatsApp & Telegram 📲'
+            : (platform === 'whatsapp' ? 'WhatsApp' : 'Telegram');
 
         let confirmText = `✅ *Reminder Set!*\n\n` +
             `📝 *Task:* ${parsed.taskText}\n` +
@@ -634,7 +577,7 @@ async function processUserCommand(text, platform, userChatId) {
         }
         confirmText += `\n📢 *Delivery:* ${deliveryText}`;
 
-        recordHistory('bot', confirmText);
+        recordHistory(userId, 'bot', confirmText);
         return confirmText;
     }
 
@@ -644,14 +587,8 @@ async function processUserCommand(text, platform, userChatId) {
 // ---------------- TELEGRAM HANDLERS ----------------
 telegramBot.on('message', async (msg) => {
     const chatId = msg.chat.id;
-    const users = storage.getUsers();
-
-    if (users.telegramChatId && users.telegramChatId !== chatId) {
-        return telegramBot.sendMessage(chatId, '⛔ This bot is private and for personal use only.');
-    }
-    if (!users.telegramChatId) {
-        storage.setTelegramUser(chatId);
-    }
+    const senderName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ') || msg.from?.username || 'Telegram User';
+    const user = usersService.getOrCreateUser({ platform: 'telegram', id: chatId, name: senderName });
 
     // Check if voice / audio message
     if (msg.voice || msg.audio) {
@@ -671,7 +608,7 @@ telegramBot.on('message', async (msg) => {
             }
 
             await telegramBot.sendMessage(chatId, `🗣️ *আপনি বলেছেন:* "${transcribedText}"`, { parse_mode: 'Markdown' });
-            const reply = await processUserCommand(transcribedText, 'telegram', chatId);
+            const reply = await processUserCommand(transcribedText, 'telegram', chatId, user.id);
             if (reply) {
                 return telegramBot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
             }
@@ -703,7 +640,7 @@ telegramBot.on('message', async (msg) => {
             const buffer = Buffer.from(arrayBuffer);
 
             const caption = msg.caption ? msg.caption.trim() : originalName;
-            const saved = vault.saveAttachment({ buffer, originalName, caption, mimeType });
+            const saved = vault.saveAttachment(user.id, { buffer, originalName, caption, mimeType });
 
             return telegramBot.sendMessage(chatId, 
                 `✅ *ডকুমেন্ট ভল্টে সংরক্ষিত হয়েছে!*\n\n` +
@@ -723,13 +660,14 @@ telegramBot.on('message', async (msg) => {
 
     if (text.startsWith('/start') || text.toLowerCase() === 'help') {
         return telegramBot.sendMessage(chatId,
-            `👋 *স্বাগতম! আমি আপনার অল-ইন-ওয়ান AI পার্সোনাল অ্যাসিস্ট্যান্ট (SIUSHO)।*\n\n` +
+            `👋 *স্বাগতম ${user.name}! আমি আপনার অল-ইন-ওয়ান AI পার্সোনাল অ্যাসিস্ট্যান্ট (SIUSHO)।*\n\n` +
+            `🛡️ *আপনার জন্য সম্পূর্ণ আলাদা ও সুরক্ষিত প্রাইভেট স্পেস তৈরি করা হয়েছে।* আপনার কোনো তথ্য অন্য কারও সাথে শেয়ার হবে না।\n\n` +
             `নিচের কুইক বাটনগুলো দিয়ে সহজেই কাজ করতে পারেন অথবা সাধারণ ভাষায় লিখে বা **ভয়েস পাঠিয়ে** নির্দেশ দিতে পারেন! 👇`,
             { parse_mode: 'Markdown', ...MAIN_MENU_KEYBOARD }
         );
     }
 
-    const reply = await processUserCommand(text, 'telegram', chatId);
+    const reply = await processUserCommand(text, 'telegram', chatId, user.id);
     if (reply) {
         return telegramBot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
     }
@@ -738,31 +676,50 @@ telegramBot.on('message', async (msg) => {
 // Handle Telegram Inline Keyboard Callbacks
 telegramBot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
+    const senderName = [query.from?.first_name, query.from?.last_name].filter(Boolean).join(' ') || query.from?.username || 'Telegram User';
+    const user = usersService.getOrCreateUser({ platform: 'telegram', id: chatId, name: senderName });
     const data = query.data;
 
     try {
         await telegramBot.answerCallbackQuery(query.id);
 
         if (data === 'btn_fin_today') {
-            return telegramBot.sendMessage(chatId, finance.formatDailyReport(), { parse_mode: 'Markdown' });
+            return telegramBot.sendMessage(chatId, finance.formatDailyReport(user.id), { parse_mode: 'Markdown' });
         }
         if (data === 'btn_fin_month') {
-            return telegramBot.sendMessage(chatId, finance.formatMonthlyReport(), { parse_mode: 'Markdown' });
+            return telegramBot.sendMessage(chatId, finance.formatMonthlyReport(user.id), { parse_mode: 'Markdown' });
         }
         if (data === 'btn_dues') {
-            return telegramBot.sendMessage(chatId, dues.formatDuesList(), { parse_mode: 'Markdown' });
+            return telegramBot.sendMessage(chatId, dues.formatDuesList(user.id), { parse_mode: 'Markdown' });
         }
         if (data === 'btn_clients') {
-            return telegramBot.sendMessage(chatId, clients.formatClientList(), { parse_mode: 'Markdown' });
+            return telegramBot.sendMessage(chatId, clients.formatClientList(user.id), { parse_mode: 'Markdown' });
         }
         if (data === 'btn_vault') {
-            return telegramBot.sendMessage(chatId, vault.listVaultFiles(), { parse_mode: 'Markdown' });
+            return telegramBot.sendMessage(chatId, vault.listVaultFiles(user.id), { parse_mode: 'Markdown' });
         }
-        if (data === 'btn_auth_numbers') {
-            return telegramBot.sendMessage(chatId, storage.formatAuthorizedNumbersList(), { parse_mode: 'Markdown' });
+        if (data === 'btn_link') {
+            const code = usersService.generateLinkCode(user.id);
+            return telegramBot.sendMessage(chatId,
+                `🔗 *আপনার অ্যাকাউন্ট সিঙ্ক কোড:* 👉 \`${code}\` 👈\n\n` +
+                `📱 *কীভাবে WhatsApp লিঙ্ক করবেন:*\n` +
+                `আপনার WhatsApp থেকে এই বটকে লিখুন:\n` +
+                `\`/link ${code}\`\n\n` +
+                `⏱️ এই কোডটির মেয়াদ ১৫ মিনিট। লিঙ্ক করার সাথে সাথে আপনার WhatsApp ও Telegram-এর সমস্ত ডেটা এক হয়ে যাবে!`,
+                { parse_mode: 'Markdown' }
+            );
+        }
+        if (data === 'btn_profile') {
+            let reply = `👤 *আপনার প্রোফাইল তথ্য:*\n━━━━━━━━━━━━━━━━━━━━━\n`;
+            reply += `🆔 *ইউজার আইডি:* \`${user.id}\`\n`;
+            reply += `📛 *নাম:* ${user.name}\n`;
+            reply += `📱 *WhatsApp:* ${user.whatsappPhone ? user.whatsappPhone : (user.whatsappJid ? 'সংযুক্ত ✅' : 'সংযুক্ত নয় ❌')}\n`;
+            reply += `🤖 *Telegram:* ${user.telegramChatId ? `সংযুক্ত ✅ (ID: ${user.telegramChatId})` : 'সংযুক্ত নয় ❌'}\n\n`;
+            reply += `💡 অন্য ডিভাইস লিঙ্ক করতে লিখুন: \`/link\``;
+            return telegramBot.sendMessage(chatId, reply, { parse_mode: 'Markdown' });
         }
         if (data === 'btn_fin_delete') {
-            const deleted = finance.deleteLastTransaction();
+            const deleted = finance.deleteLastTransaction(user.id);
             if (deleted) {
                 return telegramBot.sendMessage(chatId, `🗑️ *শেষ খরচটি মুছে ফেলা হয়েছে!*\n${deleted.category}: ${deleted.amount} ৳ (${deleted.note || ''})`, { parse_mode: 'Markdown' });
             } else {
@@ -770,12 +727,13 @@ telegramBot.on('callback_query', async (query) => {
             }
         }
         if (data.startsWith('done_')) {
-            urgent.confirmUrgentTask();
+            urgent.confirmUrgentTask(user.id);
             return telegramBot.sendMessage(chatId, `✅ *কাজটি সম্পন্ন হিসেবে চিহ্নিত করা হলো! অ্যালার্ম বন্ধ।* 👍`);
         }
         if (data.startsWith('snooze_')) {
             const newReminder = {
                 id: 'snooze_' + Date.now(),
+                userId: user.id,
                 taskText: 'Snoozed Reminder / Task',
                 targetDate: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
                 humanReadableTime: new Date(Date.now() + 10 * 60 * 1000).toLocaleString('en-US', { timeZone: 'Asia/Dhaka', hour12: true }),
@@ -792,48 +750,42 @@ telegramBot.on('callback_query', async (query) => {
 });
 
 // ---------------- WHATSAPP HANDLERS ----------------
-function isAuthorizedWhatsApp(from) {
-    return storage.isWhatsAppAuthorized(from);
-}
-
-async function handleWhatsAppText(from, text) {
+async function handleWhatsAppText(from, text, msg) {
     if (!from || from.endsWith('@g.us')) return;
 
-    if (!isAuthorizedWhatsApp(from)) {
-        console.warn(`[Security] Blocked unauthorized WhatsApp message from: ${from}`);
-        return;
-    }
+    const senderName = msg?.pushName || '';
+    const phoneJid = msg?.key?.remoteJid?.includes('@s.whatsapp.net') 
+        ? msg.key.remoteJid 
+        : (msg?.key?.participant?.includes('@s.whatsapp.net') ? msg.key.participant : null);
 
-    const users = storage.getUsers();
-    if (!users.whatsappChatId) {
-        storage.setWhatsAppUser(from);
-        console.log(`👤 Linked WhatsApp User ID: ${from}`);
-    }
-
-    console.log(`💬 Processing WhatsApp command from ${from}: "${text}"`);
+    const user = usersService.getOrCreateUser({ platform: 'whatsapp', id: from, name: senderName, phoneJid });
+    console.log(`💬 [WhatsApp User: ${user.name} (${user.id})] Command: "${text}"`);
 
     if (text === '/start') {
-        return sendWhatsAppMessage(from,
-            `👋 স্বাগতম! আমি আপনার অল-ইন-ওয়ান AI পার্সোনাল অ্যাসিস্ট্যান্ট (SIUSHO)।\n\n` +
+        const welcome = `👋 *স্বাগতম ${user.name}! আমি আপনার অল-ইন-ওয়ান AI পার্সোনাল অ্যাসিস্ট্যান্ট (SIUSHO)।*\n\n` +
+            `🛡️ *আপনার জন্য সম্পূর্ণ আলাদা ও নিরাপদ প্রাইভেট স্পেস তৈরি করা হয়েছে।* আপনার কোনো তথ্য অন্য কারও সাথে শেয়ার হবে না।\n\n` +
             `আমি যা যা করতে পারি:\n` +
             `1️⃣ 💸 দৈনিক আয়-ব্যয় ট্র্যাকিং ও রাত ১০টায় রিপোর্ট\n` +
             `2️⃣ 🤝 দেনা-পাওনা ও বকেয়া খাতা ('দেনা পাওনার হিসাব')\n` +
             `3️⃣ 👤 ক্লায়েন্ট প্রজেক্ট ও ডেডলাইন ট্র্যাকিং\n` +
             `4️⃣ 🚨 ভাইভা/পরীক্ষার নাছোড়বান্দা অ্যালার্ম\n` +
             `5️⃣ 📂 ফাইল ভল্ট (ছবি/পিডিএফ সেভ ও রিকল)\n` +
-            `6️⃣ 🎙️ ভয়েস মেসেজ শুনে কাজ করা!`
-        );
+            `6️⃣ 🔗 Telegram সিঙ্ক করতে লিখুন: \`/link\`\n` +
+            `7️⃣ 🎙️ ভয়েস মেসেজ শুনে কাজ করা!`;
+        return sendWhatsAppMessage(from, welcome);
     }
 
-    const reply = await processUserCommand(text, 'whatsapp', from);
+    const reply = await processUserCommand(text, 'whatsapp', from, user.id);
     if (reply) {
         console.log(`📤 [WhatsApp Reply] To: ${from} | Reply: "${reply.slice(0, 50)}..."`);
         return sendWhatsAppMessage(from, reply);
     }
 }
 
-async function handleWhatsAppVoice(from, audioBuffer, mimeType) {
-    if (!isAuthorizedWhatsApp(from)) return;
+async function handleWhatsAppVoice(from, audioBuffer, mimeType, msg) {
+    const senderName = msg?.pushName || '';
+    const phoneJid = msg?.key?.remoteJid?.includes('@s.whatsapp.net') ? msg.key.remoteJid : null;
+    const user = usersService.getOrCreateUser({ platform: 'whatsapp', id: from, name: senderName, phoneJid });
 
     try {
         await sendWhatsAppMessage(from, '🎙️ আপনার ভয়েস মেসেজ শুনছি...');
@@ -843,7 +795,7 @@ async function handleWhatsAppVoice(from, audioBuffer, mimeType) {
         }
 
         await sendWhatsAppMessage(from, `🗣️ *আপনি বলেছেন:* "${transcribedText}"`);
-        const reply = await processUserCommand(transcribedText, 'whatsapp', from);
+        const reply = await processUserCommand(transcribedText, 'whatsapp', from, user.id);
         if (reply) {
             return sendWhatsAppMessage(from, reply);
         }
@@ -853,17 +805,14 @@ async function handleWhatsAppVoice(from, audioBuffer, mimeType) {
     }
 }
 
-async function handleWhatsAppMedia(from, buffer, originalName, caption, mimeType) {
-    if (!isAuthorizedWhatsApp(from)) return;
-
-    const users = storage.getUsers();
-    if (!users.whatsappChatId) {
-        storage.setWhatsAppUser(from);
-    }
+async function handleWhatsAppMedia(from, buffer, originalName, caption, mimeType, msg) {
+    const senderName = msg?.pushName || '';
+    const phoneJid = msg?.key?.remoteJid?.includes('@s.whatsapp.net') ? msg.key.remoteJid : null;
+    const user = usersService.getOrCreateUser({ platform: 'whatsapp', id: from, name: senderName, phoneJid });
 
     try {
         const finalCaption = caption ? caption.trim() : originalName;
-        const saved = vault.saveAttachment({ buffer, originalName, caption: finalCaption, mimeType });
+        const saved = vault.saveAttachment(user.id, { buffer, originalName, caption: finalCaption, mimeType });
 
         return sendWhatsAppMessage(from,
             `✅ ডকুমেন্ট ভল্টে সংরক্ষিত হয়েছে!\n\n` +
@@ -877,28 +826,40 @@ async function handleWhatsAppMedia(from, buffer, originalName, caption, mimeType
     }
 }
 
-// ---------------- AUTOMATED CRON SCHEDULES ----------------
-// 1. Daily Finance Report at 10:00 PM (22:00 Dhaka Time)
+// ---------------- AUTOMATED MULTI-USER CRON SCHEDULES ----------------
+// 1. Daily Finance Report at 10:00 PM (22:00 Dhaka Time) for each user
 schedule.scheduleJob('0 22 * * *', async () => {
-    console.log('⏰ [Cron] Running Daily Finance Report (10:00 PM)...');
-    const report = finance.formatDailyReport();
-    await sendDualNotification(`🌙 *রাত ১০টা: দিন শেষের আর্থিক হিসাব!*\n\n` + report);
+    console.log('⏰ [Cron] Running Daily Finance Reports for all users (10:00 PM)...');
+    const allUsers = usersService.getAllUsers();
+    for (const u of allUsers) {
+        const summary = finance.getDailySummary(u.id);
+        if (summary.items.length > 0) {
+            const report = finance.formatDailyReport(u.id);
+            await sendUserNotification(u.id, `🌙 *রাত ১০টা: দিন শেষের আর্থিক হিসাব!*\n\n` + report);
+        }
+    }
 });
 
-// 2. Monthly Finance Report on the 1st of every month at 9:00 AM
+// 2. Monthly Finance Report on the 1st of every month at 9:00 AM for each user
 schedule.scheduleJob('0 9 1 * *', async () => {
-    console.log('⏰ [Cron] Running Monthly Finance Report...');
-    const report = finance.formatMonthlyReport();
-    await sendDualNotification(`🗓️ *নতুন মাসের শুরু: বিগত মাসের আর্থিক রিপোর্ট!*\n\n` + report);
+    console.log('⏰ [Cron] Running Monthly Finance Reports for all users...');
+    const allUsers = usersService.getAllUsers();
+    for (const u of allUsers) {
+        const report = finance.formatMonthlyReport(u.id);
+        await sendUserNotification(u.id, `🗓️ *নতুন মাসের শুরু: বিগত মাসের আর্থিক রিপোর্ট!*\n\n` + report);
+    }
 });
 
-// 3. Morning Client Deadlines Briefing at 9:00 AM
+// 3. Morning Client Deadlines Briefing at 9:00 AM for each user
 schedule.scheduleJob('0 9 * * *', async () => {
-    console.log('⏰ [Cron] Running Morning Client Briefing (9:00 AM)...');
-    const pending = clients.getPendingProjects();
-    if (pending.length > 0) {
-        const clientList = clients.formatClientList();
-        await sendDualNotification(`☀️ *শুভ সকাল! আজকের ক্লায়েন্ট প্রজেক্ট আপডেট:*\n\n` + clientList);
+    console.log('⏰ [Cron] Running Morning Client Briefing for all users (9:00 AM)...');
+    const allUsers = usersService.getAllUsers();
+    for (const u of allUsers) {
+        const pending = clients.getPendingProjects(u.id);
+        if (pending.length > 0) {
+            const clientList = clients.formatClientList(u.id);
+            await sendUserNotification(u.id, `☀️ *শুভ সকাল! আজকের ক্লায়েন্ট প্রজেক্ট আপডেট:*\n\n` + clientList);
+        }
     }
 });
 
@@ -921,15 +882,16 @@ schedule.scheduleJob('*/1 * * * *', async () => {
                     `⏰ *প্রথম সতর্কবার্তা ছিল:* ${new Date(t.firstAlertISO).toLocaleString('en-US', { timeZone: 'Asia/Dhaka', hour12: true })}\n` +
                     `🔁 আপনি সম্পন্ন না করা পর্যন্ত প্রতি ${t.repeatIntervalMins} মিনিট পর পর অ্যালার্ম বাজবে!\n\n` +
                     `💡 কাজ শেষ হলে বাটনে চাপ দিন অথবা লিখুন: *"Done"*`;
-        await sendDualNotification(msg, keyboard);
+        await sendUserNotification(t.userId, msg, keyboard);
     }
 });
 
 async function handlePairingCode(code) {
-    const users = storage.getUsers();
-    if (users.telegramChatId) {
+    const allUsers = usersService.getAllUsers();
+    const primary = allUsers.find(u => u.telegramChatId);
+    if (primary && primary.telegramChatId) {
         try {
-            await telegramBot.sendMessage(users.telegramChatId, 
+            await telegramBot.sendMessage(primary.telegramChatId, 
                 `🔑 *WhatsApp Pairing Code (ক্লাউড থেকে):*\n\n` +
                 `👉 \`${code}\`\n\n` +
                 `📱 আপনার ফোনের WhatsApp > Linked Devices > Link with phone number instead-এ গিয়ে কোডটি বসিয়ে দিন!`,
@@ -944,4 +906,4 @@ async function handlePairingCode(code) {
 // Start WhatsApp & Restore Reminders
 startWhatsApp(handleWhatsAppText, handleWhatsAppMedia, handleWhatsAppVoice, handlePairingCode);
 restoreReminders();
-console.log('🚀 SIUSHO All-in-One Executive Assistant is running smoothly!');
+console.log('🚀 SIUSHO Multi-User AI Executive Assistant is running smoothly!');

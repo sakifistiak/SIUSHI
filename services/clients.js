@@ -27,10 +27,11 @@ function saveProjects(projects) {
     fs.writeFileSync(DB_PATH, JSON.stringify({ projects }, null, 2));
 }
 
-function addProject({ clientName, projectTask, deadlineISO, fee }) {
+function addProject(userId, { clientName, projectTask, deadlineISO, fee }) {
     const list = getProjects();
     const item = {
         id: 'cp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        userId: userId || 'default',
         clientName: clientName || 'ক্লায়েন্ট',
         projectTask: projectTask || 'প্রজেক্ট কাজ',
         deadlineISO: deadlineISO,
@@ -44,19 +45,22 @@ function addProject({ clientName, projectTask, deadlineISO, fee }) {
     return item;
 }
 
-function getPendingProjects() {
+function getPendingProjects(userId) {
     const list = getProjects();
-    return list.filter(p => p.status === 'pending');
+    return list.filter(p => p.status === 'pending' && (!userId || p.userId === userId || (!p.userId && userId === 'default')));
 }
 
-function markProjectDone(query) {
+function markProjectDone(userId, query) {
     const list = getProjects();
     const clean = (query || '').toLowerCase().trim();
-    const item = list.find(p => p.status === 'pending' && (
-        p.id === clean || 
-        p.clientName.toLowerCase().includes(clean) || 
-        p.projectTask.toLowerCase().includes(clean)
-    ));
+    const item = list.find(p => 
+        p.status === 'pending' && 
+        (!userId || p.userId === userId || (!p.userId && userId === 'default')) && (
+            p.id === clean || 
+            p.clientName.toLowerCase().includes(clean) || 
+            p.projectTask.toLowerCase().includes(clean)
+        )
+    );
 
     if (item) {
         item.status = 'completed';
@@ -67,8 +71,8 @@ function markProjectDone(query) {
     return null;
 }
 
-function formatClientList() {
-    const pending = getPendingProjects();
+function formatClientList(userId) {
+    const pending = getPendingProjects(userId);
     if (pending.length === 0) {
         return `🎉 আপনার বর্তমানে কোনো পেন্ডিং ক্লায়েন্ট প্রজেক্ট নেই! সব কাজ শেষ।`;
     }

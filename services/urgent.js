@@ -27,17 +27,18 @@ function saveTasks(tasks) {
     fs.writeFileSync(DB_PATH, JSON.stringify({ tasks }, null, 2));
 }
 
-function addUrgentTask({ title, firstAlertISO, repeatIntervalMins }) {
+function addUrgentTask(userId, { title, firstAlertISO, repeatIntervalMins }) {
     const list = getTasks();
     const interval = Math.max(parseInt(repeatIntervalMins, 10) || 15, 2); // default 15 mins
     const item = {
         id: 'urg_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        userId: userId || 'default',
         title: title || 'জরুরি কাজ / পরীক্ষা',
         firstAlertISO: firstAlertISO,
         nextAlertISO: firstAlertISO,
         repeatIntervalMins: interval,
         alertCount: 0,
-        status: 'active', // active or confirmed
+        status: 'active',
         createdAt: new Date().toISOString()
     };
     list.push(item);
@@ -45,12 +46,14 @@ function addUrgentTask({ title, firstAlertISO, repeatIntervalMins }) {
     return item;
 }
 
-function confirmUrgentTask(query) {
+function confirmUrgentTask(userId, query) {
     const list = getTasks();
-    const activeTasks = list.filter(t => t.status === 'active');
+    const activeTasks = list.filter(t => 
+        t.status === 'active' && 
+        (!userId || t.userId === userId || (!t.userId && userId === 'default'))
+    );
     if (activeTasks.length === 0) return null;
 
-    // If query provided, try matching by keyword or id
     if (query && query.trim() !== 'done' && query.trim() !== 'শেষ' && query.trim() !== 'completed') {
         const clean = query.toLowerCase().trim();
         const found = activeTasks.find(t => t.id === clean || t.title.toLowerCase().includes(clean));
@@ -62,7 +65,6 @@ function confirmUrgentTask(query) {
         }
     }
 
-    // Otherwise confirm the oldest active task
     const target = activeTasks[0];
     target.status = 'confirmed';
     target.confirmedAt = new Date().toISOString();
@@ -79,7 +81,6 @@ function getDueTasks() {
         if (t.status === 'active' && new Date(t.nextAlertISO).getTime() <= now) {
             due.push(t);
             t.alertCount = (t.alertCount || 0) + 1;
-            // Schedule next nag in repeatIntervalMins
             t.nextAlertISO = new Date(now + t.repeatIntervalMins * 60 * 1000).toISOString();
         }
     });
@@ -90,8 +91,11 @@ function getDueTasks() {
     return due;
 }
 
-function getActiveTasks() {
-    return getTasks().filter(t => t.status === 'active');
+function getActiveTasks(userId) {
+    return getTasks().filter(t => 
+        t.status === 'active' && 
+        (!userId || t.userId === userId || (!t.userId && userId === 'default'))
+    );
 }
 
 module.exports = {

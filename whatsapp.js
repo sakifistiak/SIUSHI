@@ -15,10 +15,19 @@ const botSentMessageIds = new Set();
 
 function normalizeJid(jid) {
     if (!jid) return jid;
-    if (jid.includes(':') && jid.includes('@')) {
-        return jid.split(':')[0] + '@' + jid.split('@')[1];
+    let clean = jid;
+    if (clean.includes(':') && clean.includes('@')) {
+        clean = clean.split(':')[0] + '@' + clean.split('@')[1];
     }
-    return jid;
+    // If it's the bot's own LID or self-chat, redirect to the bot's phone JID so self-chat messages appear in Message Yourself!
+    if (waSocket && waSocket.user) {
+        const userLid = waSocket.user.lid ? waSocket.user.lid.split(':')[0] : '';
+        const userPhone = waSocket.user.id ? waSocket.user.id.split(':')[0] : '';
+        if (userLid && clean.startsWith(userLid) && userPhone) {
+            clean = userPhone + '@s.whatsapp.net';
+        }
+    }
+    return clean;
 }
 
 function isSelfChat(msg, socketUser) {
@@ -188,7 +197,7 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
                     const buffer = await downloadMediaMessage(mediaSource, 'buffer', {}, { logger: pino({ level: 'silent' }) });
                     const mimeType = raw?.audioMessage?.mimetype || 'audio/ogg';
                     console.log(`🎙️ [WhatsApp Voice] From: ${from} (self: ${selfChat}) | Mime: ${mimeType}`);
-                    await onAudioReceived(from, buffer, mimeType);
+                    await onAudioReceived(from, buffer, mimeType, msg);
                     continue;
                 } catch (e) {
                     console.error('Failed to download WhatsApp audio:', e.message);
@@ -204,7 +213,7 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
                     const mimeType = raw?.imageMessage?.mimetype || raw?.documentMessage?.mimetype || 'application/octet-stream';
 
                     console.log(`📎 [WhatsApp Media] From: ${from} (self: ${selfChat}) | File: ${originalName} | Caption: "${caption}"`);
-                    await onMediaReceived(from, buffer, originalName, caption, mimeType);
+                    await onMediaReceived(from, buffer, originalName, caption, mimeType, msg);
                     continue;
                 } catch (e) {
                     console.error('Failed to download media:', e.message);

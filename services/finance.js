@@ -27,19 +27,19 @@ function saveTransactions(transactions) {
     fs.writeFileSync(DB_PATH, JSON.stringify({ transactions }, null, 2));
 }
 
-function addTransaction({ type, amount, category, note }) {
+function addTransaction(userId, { type, amount, category, note }) {
     const list = getTransactions();
     const now = new Date();
-    // Dhaka Date: YYYY-MM-DD
     const offset = 6 * 60;
     const dhakaTime = new Date(now.getTime() + (offset + now.getTimezoneOffset()) * 60000);
     const dateStr = dhakaTime.toISOString().split('T')[0];
-    const monthStr = dateStr.substring(0, 7); // YYYY-MM
+    const monthStr = dateStr.substring(0, 7);
 
     const numAmount = Math.abs(parseFloat(amount) || 0);
 
     const item = {
         id: 'fin_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
+        userId: userId || 'default',
         type: type === 'income' ? 'income' : 'expense',
         amount: numAmount,
         category: category || (type === 'income' ? 'ইনকাম' : 'অন্যান্য খরচ'),
@@ -54,11 +54,19 @@ function addTransaction({ type, amount, category, note }) {
     return item;
 }
 
-function updateLastTransaction(fields) {
+function updateLastTransaction(userId, fields) {
     const list = getTransactions();
-    if (list.length === 0) return null;
+    // Find the last transaction belonging to this user
+    let lastIdx = -1;
+    for (let i = list.length - 1; i >= 0; i--) {
+        if (!userId || list[i].userId === userId || !list[i].userId) {
+            lastIdx = i;
+            break;
+        }
+    }
+    if (lastIdx === -1) return null;
 
-    const last = list[list.length - 1];
+    const last = list[lastIdx];
     if (fields.amount !== undefined && fields.amount !== null && fields.amount > 0) {
         last.amount = parseFloat(fields.amount);
     }
@@ -77,19 +85,29 @@ function updateLastTransaction(fields) {
     return last;
 }
 
-function deleteLastTransaction() {
+function deleteLastTransaction(userId) {
     const list = getTransactions();
-    if (list.length === 0) return null;
+    let lastIdx = -1;
+    for (let i = list.length - 1; i >= 0; i--) {
+        if (!userId || list[i].userId === userId || !list[i].userId) {
+            lastIdx = i;
+            break;
+        }
+    }
+    if (lastIdx === -1) return null;
 
-    const removed = list.pop();
+    const [removed] = list.splice(lastIdx, 1);
     saveTransactions(list);
     return removed;
 }
 
-function getDailySummary(targetDateStr) {
+function getDailySummary(userId, targetDateStr) {
     const list = getTransactions();
     const date = targetDateStr || (new Date(Date.now() + 6 * 3600 * 1000)).toISOString().split('T')[0];
-    const dayItems = list.filter(t => t.date === date);
+    const dayItems = list.filter(t => 
+        (!userId || t.userId === userId || (!t.userId && userId === 'default')) && 
+        t.date === date
+    );
 
     let totalIncome = 0;
     let totalExpense = 0;
@@ -115,10 +133,13 @@ function getDailySummary(targetDateStr) {
     };
 }
 
-function getMonthlySummary(targetMonthStr) {
+function getMonthlySummary(userId, targetMonthStr) {
     const list = getTransactions();
     const month = targetMonthStr || (new Date(Date.now() + 6 * 3600 * 1000)).toISOString().substring(0, 7);
-    const monthItems = list.filter(t => t.month === month);
+    const monthItems = list.filter(t => 
+        (!userId || t.userId === userId || (!t.userId && userId === 'default')) && 
+        t.month === month
+    );
 
     let totalIncome = 0;
     let totalExpense = 0;
@@ -143,8 +164,8 @@ function getMonthlySummary(targetMonthStr) {
     };
 }
 
-function formatDailyReport(targetDateStr) {
-    const summary = getDailySummary(targetDateStr);
+function formatDailyReport(userId, targetDateStr) {
+    const summary = getDailySummary(userId, targetDateStr);
     let msg = `📊 *আজকের আর্থিক হিসাব (${summary.date})*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     msg += `💵 *মোট আয়:* ${summary.totalIncome.toLocaleString('en-US')} ৳\n`;
@@ -166,8 +187,8 @@ function formatDailyReport(targetDateStr) {
     return msg;
 }
 
-function formatMonthlyReport(targetMonthStr) {
-    const summary = getMonthlySummary(targetMonthStr);
+function formatMonthlyReport(userId, targetMonthStr) {
+    const summary = getMonthlySummary(userId, targetMonthStr);
     let msg = `📅 *মাসিক আর্থিক সারসংক্ষেপ (${summary.month})*\n`;
     msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
     msg += `💵 *পুরো মাসের মোট আয়:* ${summary.totalIncome.toLocaleString('en-US')} ৳\n`;

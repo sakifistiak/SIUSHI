@@ -27,15 +27,16 @@ function saveDues(dues) {
     fs.writeFileSync(DB_PATH, JSON.stringify({ dues }, null, 2));
 }
 
-function addDue({ type, personName, amount, note }) {
+function addDue(userId, { type, personName, amount, note }) {
     const list = getDues();
     const item = {
         id: 'due_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4),
-        type: type === 'payable' ? 'payable' : 'receivable', // payable = দেনা, receivable = পাওনা
+        userId: userId || 'default',
+        type: type === 'payable' ? 'payable' : 'receivable',
         personName: (personName || 'ব্যক্তি').trim(),
         amount: Math.abs(parseFloat(amount) || 0),
         note: (note || '').trim(),
-        status: 'pending', // pending or settled
+        status: 'pending',
         createdAt: new Date().toISOString()
     };
     list.push(item);
@@ -43,13 +44,16 @@ function addDue({ type, personName, amount, note }) {
     return item;
 }
 
-function settleDue(query) {
+function settleDue(userId, query) {
     const list = getDues();
     const clean = (query || '').toLowerCase().trim();
-    const item = list.find(d => d.status === 'pending' && (
-        d.id === clean || 
-        d.personName.toLowerCase().includes(clean)
-    ));
+    const item = list.find(d => 
+        d.status === 'pending' && 
+        (!userId || d.userId === userId || (!d.userId && userId === 'default')) && (
+            d.id === clean || 
+            d.personName.toLowerCase().includes(clean)
+        )
+    );
 
     if (item) {
         item.status = 'settled';
@@ -60,12 +64,15 @@ function settleDue(query) {
     return null;
 }
 
-function getActiveDues() {
-    return getDues().filter(d => d.status === 'pending');
+function getActiveDues(userId) {
+    return getDues().filter(d => 
+        d.status === 'pending' && 
+        (!userId || d.userId === userId || (!d.userId && userId === 'default'))
+    );
 }
 
-function formatDuesList() {
-    const active = getActiveDues();
+function formatDuesList(userId) {
+    const active = getActiveDues(userId);
     if (active.length === 0) {
         return `🎉 আপনার বর্তমানে কারো কাছে কোনো দেনা বা পাওনা বাকি নেই! খাতা একদম পরিষ্কার।`;
     }
@@ -99,9 +106,8 @@ function formatDuesList() {
 
     const net = totalReceivable - totalPayable;
     const netSign = net >= 0 ? '+' : '';
-    msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
-    msg += `💰 *নেট দেনা-পাওনা ব্যালেন্স:* ${netSign}${net.toLocaleString('en-US')} ৳\n\n`;
-    msg += `💡 টাকা পরিশোধ হলে লিখুন: *"পরিশোধ [নাম]"* (যেমন: *"পরিশোধ রহিম ভাই"* অথবা *"আলামিন টাকা দিয়ে দিয়েছে"*)\n`;
+    msg += `💰 *নেট হিসাব:* ${netSign}${net.toLocaleString('en-US')} ৳\n`;
+    msg += `💡 কোনো বকেয়া শোধ হলে লিখুন: *"পরিশোধ [ব্যক্তির নাম]"*`;
 
     return msg;
 }
