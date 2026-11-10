@@ -1,0 +1,14 @@
+node_modules
+.git
+baileys_auth_info
+.wwebjs_auth
+.wwebjs_cache
+vault_files
+data
+*.json
+!package.json
+!package-lock.json
+.env
+npm-debug.log*
+whatsapp-qr.png
+bot_dp.jpg

@@ -116,13 +116,15 @@ async function autoMigrateLocalData() {
     }
 }
 
+const SINGLETON_COLLECTIONS = new Set(['settings', 'wa_session']);
+
 /**
  * Universal Data Read
  */
 async function loadCollection(collectionName, defaultVal = []) {
     if (isConnectedToMongo && mongoDb) {
         try {
-            if (collectionName === 'settings') {
+            if (SINGLETON_COLLECTIONS.has(collectionName)) {
                 const doc = await mongoDb.collection(collectionName).findOne({ _id: 'config' });
                 if (doc) {
                     delete doc._id;
@@ -151,7 +153,7 @@ async function saveCollection(collectionName, data) {
 
     if (isConnectedToMongo && mongoDb) {
         try {
-            if (collectionName === 'settings') {
+            if (SINGLETON_COLLECTIONS.has(collectionName)) {
                 await mongoDb.collection(collectionName).updateOne(
                     { _id: 'config' },
                     { $set: data },
@@ -210,10 +212,11 @@ async function restoreFullSnapshot(snapshot) {
 }
 
 // Auto-boot DB
-initDatabase().catch(err => console.warn('[Database Init]:', err.message));
+const initPromise = initDatabase().catch(err => console.warn('[Database Init]:', err.message));
 
 module.exports = {
     initDatabase,
+    waitForDatabase: () => initPromise,
     loadCollection,
     saveCollection,
     readLocalCollection,

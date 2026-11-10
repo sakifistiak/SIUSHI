@@ -3,6 +3,8 @@ const pino = require('pino');
 const QRCode = require('qrcode');
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib');
+const db = require('./services/db');
 
 let waSocket = null;
 let currentPairingCode = null;
@@ -11,6 +13,10 @@ let isConnected = false;
 let lastPairingError = null;
 
 const SESSION_FILE = path.join(__dirname, 'data', 'wa_session.json');
+
+function isEssentialAuthFile(filename) {
+    return filename === 'creds.json' || filename.startsWith('app-state-sync-key-');
+}
 
 function getSessionBase64() {
     const authDir = path.join(__dirname, 'baileys_auth_info');
@@ -22,6 +28,7 @@ function getSessionBase64() {
         const files = fs.readdirSync(authDir);
         const bundle = {};
         for (const file of files) {
+            if (!isEssentialAuthFile(file)) continue;
             const filePath = path.join(authDir, file);
             if (fs.statSync(filePath).isFile()) {
                 bundle[file] = fs.readFileSync(filePath, 'utf-8');
@@ -38,17 +45,28 @@ function restoreSessionFromBase64(base64Str) {
     if (!base64Str || typeof base64Str !== 'string') return false;
     try {
         const cleanStr = base64Str.trim().replace(/^['"]|['"]$/g, '');
-        const jsonStr = Buffer.from(cleanStr, 'base64').toString('utf-8');
+        const rawBuf = Buffer.from(cleanStr, 'base64');
+        let jsonStr;
+        // Support both plain base64 JSON and gzip-compressed base64 payloads
+        if (rawBuf.length >= 2 && rawBuf[0] === 0x1f && rawBuf[1] === 0x8b) {
+            jsonStr = zlib.gunzipSync(rawBuf).toString('utf-8');
+        } else {
+            jsonStr = rawBuf.toString('utf-8');
+        }
         const bundle = JSON.parse(jsonStr);
         if (!bundle || !bundle['creds.json']) return false;
 
         const authDir = path.join(__dirname, 'baileys_auth_info');
         if (!fs.existsSync(authDir)) fs.mkdirSync(authDir, { recursive: true });
 
+        let restoredCount = 0;
         for (const [filename, content] of Object.entries(bundle)) {
-            fs.writeFileSync(path.join(authDir, filename), content, 'utf-8');
+            const safeName = path.basename(filename);
+            if (!safeName) continue;
+            fs.writeFileSync(path.join(authDir, safeName), content, 'utf-8');
+            restoredCount++;
         }
-        console.log(`[WhatsApp Auth] Restored ${Object.keys(bundle).length} auth files from session token.`);
+        console.log(`[WhatsApp Auth] Restored ${restoredCount} auth files from session token.`);
         return true;
     } catch (err) {
         console.error('[WhatsApp Auth] Failed to restore session from base64:', err.message);
@@ -60,9 +78,13 @@ function persistSessionLocally() {
     try {
         const token = getSessionBase64();
         if (token) {
+            const payload = { token, updatedAt: new Date().toISOString() };
             const dir = path.dirname(SESSION_FILE);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            fs.writeFileSync(SESSION_FILE, JSON.stringify({ token, updatedAt: new Date().toISOString() }, null, 2));
+            fs.writeFileSync(SESSION_FILE, JSON.stringify(payload, null, 2));
+            if (db.isMongoConnected()) {
+                db.saveCollection('wa_session', payload).catch(() => {});
+            }
         }
     } catch (e) {
         // ignore
@@ -168,22 +190,38 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
         fs.mkdirSync(authDir, { recursive: true });
     }
 
-    // Auto-restore session from environment variable or local persistent store if auth dir is empty
+    // Auto-restore session from MongoDB, environment variable, or local persistent store if auth dir is empty
     const credsPath = path.join(authDir, 'creds.json');
     if (!fs.existsSync(credsPath)) {
+        let restored = false;
         const envToken = process.env.WA_SESSION_DATA || process.env.WA_SESSION_BASE64;
         if (envToken) {
             console.log('[WhatsApp Auth] Restoring session from WA_SESSION_DATA environment variable...');
-            restoreSessionFromBase64(envToken);
-        } else if (fs.existsSync(SESSION_FILE)) {
+            restored = restoreSessionFromBase64(envToken);
+        }
+        if (!restored && fs.existsSync(SESSION_FILE)) {
             try {
                 const saved = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf-8'));
                 if (saved.token) {
                     console.log('[WhatsApp Auth] Restoring session from persistent session file...');
-                    restoreSessionFromBase64(saved.token);
+                    restored = restoreSessionFromBase64(saved.token);
                 }
             } catch (e) {
                 // ignore
+            }
+        }
+        if (!restored) {
+            await db.waitForDatabase();
+            if (db.isMongoConnected()) {
+                try {
+                    const dbSession = await db.loadCollection('wa_session', null);
+                    if (dbSession && dbSession.token) {
+                        console.log('[WhatsApp Auth] Restoring session from MongoDB...');
+                        restoreSessionFromBase64(dbSession.token);
+                    }
+                } catch (e) {
+                    // ignore
+                }
             }
         }
     }
@@ -230,6 +268,12 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
                 if (fs.existsSync(authDir)) {
                     fs.rmSync(authDir, { recursive: true, force: true });
                 }
+                if (fs.existsSync(SESSION_FILE)) {
+                    fs.unlinkSync(SESSION_FILE);
+                }
+                if (db.isMongoConnected()) {
+                    db.saveCollection('wa_session', { token: null, updatedAt: new Date().toISOString() }).catch(() => {});
+                }
                 setTimeout(() => {
                     startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived, onPairingCode);
                 }, 2000);
@@ -243,6 +287,7 @@ async function startWhatsApp(onMessageReceived, onMediaReceived, onAudioReceived
             currentPairingCode = null;
             currentQRCodeDataUrl = null;
             lastPairingError = null;
+            persistSessionLocally();
             console.log('\n✅ WhatsApp is successfully connected and online!\n');
             console.log(`📱 Account ID: ${waSocket.user?.id} | LID: ${waSocket.user?.lid || 'N/A'}`);
         }
